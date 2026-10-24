@@ -343,6 +343,23 @@ function bindLogger(ctx) {
   ctxLog.warn = (msg) => ctx.logger?.warn?.(msg)
 }
 
+async function writeBootMarker(ctx, config) {
+  if (!config.statusFile) return
+  const dir = (config.statusDir ?? '').trim() || DEFAULT_STATUS_DIR
+  try {
+    await fsp.mkdir(dir, { recursive: true })
+    await fsp.writeFile(join(dir, '_boot.json'), `${JSON.stringify({
+      pid: process.pid,
+      at: new Date().toISOString(),
+      version: '0.3.1',
+      intervalMinutes: config.intervalMinutes,
+      enabled: config.enabled,
+    }, null, 2)}\n`, 'utf8')
+  } catch (error) {
+    ctxLog.warn?.(`boot marker failed: ${error?.message ?? error}`)
+  }
+}
+
 async function writeStatusFile(state, config) {
   if (!config.statusFile) return
   const dir = (config.statusDir ?? '').trim() || DEFAULT_STATUS_DIR
@@ -432,6 +449,7 @@ function appendNotice(decision, text) {
  */
 export async function apply(ctx) {
   bindLogger(ctx)
+  void writeBootMarker(ctx, liveConfig(ctx))
 
   ctx.on('agent/status', (payload) => {
     try {
@@ -491,6 +509,7 @@ export async function apply(ctx) {
         const config = liveConfig(ctx)
         if (config.enabled === false) return decision
         const state = getState(agent.session.id)
+        if (!state.writtenAt) void writeStatusFile(state, config)
         if (state.done && !state.force) return decision
 
         const now = Date.now()
