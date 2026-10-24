@@ -11,6 +11,15 @@ reports.
 > `notice` message before the model's next request, asking it to state what it is
 > doing, what is done, and what comes next — before it calls the next tool.
 
+## 设置页
+
+重启 `dsh web` 后，**设置 → 进度播报** 会出现一个独立分区（与「插件市场」同级，走的是官方的 `settings.section` 槽），可以直接改全部配置：
+
+- 开关是 DSH 原生风格，输入框/按钮跟随主题（只依赖 `currentColor` 与 `--dsw-radius-*`，浅色/深色/换肤都融合）
+- 改动点「保存」立刻写进设置文档并对当前进程生效，无需重启
+- 「恢复默认」清掉本插件的用户覆盖
+- 语言字段是下拉（auto / zh / en）
+
 ## Behaviour
 
 | Situation | What happens |
