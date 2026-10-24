@@ -210,6 +210,7 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
   const fakeCtx = new Proxy({}, {
     get(target, prop) {
       if (prop === 'on') return (name, fn) => { events.push(name) }
+      if (prop === 'remote') return { settings: { describe: async () => ({ ok: false, error: { message: 'test' } }), mutate: async () => ({ ok: false }) }, $on: () => () => {} }
       if (prop === 'get') return () => undefined
       if (prop === 'logger') return () => ({ info() {}, warn() {}, error() {}, debug() {} })
       if (prop === 'inject') return undefined
@@ -231,7 +232,9 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
     },
   }
   await import('./client/client.js')
-  assert.equal(plugin.inject.includes('slots'), true, 'client entry 必须 inject slots')
+  for (const dep of ['slots', 'remote', 'remote.settings']) {
+    assert.equal(plugin.inject.includes(dep), true, `client entry 必须 inject ${dep}`)
+  }
   const calls = []
   const ctx = new Proxy({}, {
     get(target, prop) {

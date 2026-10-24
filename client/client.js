@@ -60,7 +60,10 @@ window.__ModuleLoader__.load({
 
     function Section(props) {
       const ctx = props.ctx
-      const remote = ctx.get('remote')
+      // inject 声明了 remote 与 remote.settings，这里直接走 ctx.remote.settings
+      // （与官方 settings 客户端一致；response 形如 { ok, value, error }）。
+      const bridge = ctx.remote
+      const settings = bridge && bridge.settings
       const [state, setState] = React.useState({ phase: 'loading' })
       const [draft, setDraft] = React.useState({})
       const [saving, setSaving] = React.useState(false)
@@ -69,7 +72,7 @@ window.__ModuleLoader__.load({
       const load = React.useCallback(async () => {
         setState({ phase: 'loading' })
         try {
-          const reply = await remote.settings.describe()
+          const reply = await settings.describe()
           if (!reply || !reply.ok) {
             setState({ phase: 'error', message: reply && reply.error ? reply.error.message : '读取配置失败' })
             return
@@ -84,20 +87,20 @@ window.__ModuleLoader__.load({
         } catch (error) {
           setState({ phase: 'error', message: String((error && error.message) || error) })
         }
-      }, [remote])
+      }, [settings])
 
       React.useEffect(() => { load() }, [load])
 
       React.useEffect(() => {
         try {
-          const off = remote.$on('settings/document-updated', (ns) => {
+          const off = bridge.$on ? bridge.$on('settings/document-updated', (ns) => {
             if (ns === NS) load()
-          })
+          }) : undefined
           return typeof off === 'function' ? off : undefined
         } catch (error) {
           return undefined
         }
-      }, [remote, load])
+      }, [bridge, load])
 
       const change = (key, value) => setDraft((prev) => Object.assign({}, prev, { [key]: value }))
 
@@ -113,7 +116,7 @@ window.__ModuleLoader__.load({
         setSaving(true)
         setNotice('')
         try {
-          const reply = await remote.settings.mutate(NS, ops, state.row.revision)
+          const reply = await settings.mutate(NS, ops, state.row.revision)
           if (!reply || !reply.ok) {
             setNotice('')
             setState({ phase: 'error', message: (reply && reply.error && reply.error.message) || '保存失败' })
@@ -135,7 +138,7 @@ window.__ModuleLoader__.load({
         if (ops.length === 0) { setNotice('已经是默认值'); return }
         setSaving(true)
         try {
-          const reply = await remote.settings.mutate(NS, ops, state.row.revision)
+          const reply = await settings.mutate(NS, ops, state.row.revision)
           if (reply && reply.ok) { setNotice('已恢复默认值'); await load() }
           else setState({ phase: 'error', message: (reply && reply.error && reply.error.message) || '恢复失败' })
         } finally {
@@ -216,6 +219,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    return { name: 'dsh-progress-tick', inject: ['slots'], apply }
+    return { name: 'dsh-progress-tick', inject: ['slots', 'remote', 'remote.settings'], apply }
   }
 })
