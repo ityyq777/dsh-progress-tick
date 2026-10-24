@@ -202,4 +202,24 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
   assert.equal(typeof moduleNamespace.Config?.toJSON, 'function')
 })
 
+// ---- 回归：真实 cordis 的 ctx 是代理，未 inject 的属性访问即抛
+// `cannot get property "config" without inject`。0.3.1 曾在 apply 里读 ctx.config，
+// 导致整插件 boot 失败（“web boot: 1 entry did not activate”）。
+{
+  const events = []
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { events.push(name) }
+      if (prop === 'get') return () => undefined
+      if (prop === 'logger') return () => ({ info() {}, warn() {}, error() {}, debug() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  await moduleNamespace.apply(fakeCtx, { statusFile: false, intervalMinutes: 7 })
+  assert.ok(events.includes('agent/pre-step'), 'apply 应注册 agent/pre-step')
+  assert.ok(events.includes('agent/status'), 'apply 应注册 agent/status')
+  passed += 1
+}
+
 console.log(`✓ ${passed} 项断言通过`)

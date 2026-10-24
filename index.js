@@ -254,9 +254,9 @@ export function unwrapVolatile(value) {
 }
 
 /** 每一步都读活配置：volatile 提交不 remount，apply 里的快照会过期。 */
-function liveConfig(ctx) {
+function liveConfig(rawConfig) {
   const merged = defaultConfig()
-  const current = ctx?.config
+  const current = rawConfig
   if (current && typeof current === 'object') {
     for (const [key, value] of Object.entries(current)) merged[key] = unwrapVolatile(value)
   }
@@ -343,7 +343,7 @@ function bindLogger(ctx) {
   ctxLog.warn = (msg) => ctx.logger?.warn?.(msg)
 }
 
-async function writeBootMarker(ctx, config) {
+async function writeBootMarker(config) {
   if (!config.statusFile) return
   const dir = (config.statusDir ?? '').trim() || DEFAULT_STATUS_DIR
   try {
@@ -351,7 +351,7 @@ async function writeBootMarker(ctx, config) {
     await fsp.writeFile(join(dir, '_boot.json'), `${JSON.stringify({
       pid: process.pid,
       at: new Date().toISOString(),
-      version: '0.3.1',
+      version: '0.3.2',
       intervalMinutes: config.intervalMinutes,
       enabled: config.enabled,
     }, null, 2)}\n`, 'utf8')
@@ -447,15 +447,18 @@ function appendNotice(decision, text) {
  * dsh-settings 的 schema(entry) 返回 undefined —— 设置页就不会出现表单。
  * 保持「命名空间即插件」（apply + Config + name）才能被设置页识别。
  */
-export async function apply(ctx) {
+export async function apply(ctx, initialConfig) {
   bindLogger(ctx)
-  void writeBootMarker(ctx, liveConfig(ctx))
+  // cordis 的 ctx 是代理：未 inject 的属性（含 ctx.config）访问即抛
+  // `cannot get property "config" without inject`。配置一律走 apply 的第二个参数。
+  const baseConfig = initialConfig ?? {}
+  void writeBootMarker(liveConfig(baseConfig))
 
   ctx.on('agent/status', (payload) => {
     try {
       const agent = payload?.agent
       if (!isMainAgent(agent)) return
-      const config = liveConfig(ctx)
+      const config = liveConfig(baseConfig)
       const state = getState(agent.session.id)
       if (payload.status === 'running') {
         state.done = false
@@ -485,7 +488,7 @@ export async function apply(ctx) {
       if (frame?.type !== 'chunk' || frame.chunk?.type !== 'text-delta') return
       const text = frame.chunk.text
       if (!text?.trim()) return
-      const config = liveConfig(ctx)
+      const config = liveConfig(baseConfig)
       const state = getState(agent.session.id)
       if (state.done) return
       state.pendingChars += text.length
@@ -506,7 +509,7 @@ export async function apply(ctx) {
         if (decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
         const agent = payload?.agent
         if (!isMainAgent(agent)) return decision
-        const config = liveConfig(ctx)
+        const config = liveConfig(baseConfig)
         if (config.enabled === false) return decision
         const state = getState(agent.session.id)
         if (!state.writtenAt) void writeStatusFile(state, config)
@@ -545,7 +548,7 @@ export async function apply(ctx) {
   ctx.on('session/event', (session, event) => {
     try {
       if (!session || !event) return
-      const config = liveConfig(ctx)
+      const config = liveConfig(baseConfig)
       const header = session.header ?? {}
       const sessionId = session.id
       const parentId = header.parentSession
