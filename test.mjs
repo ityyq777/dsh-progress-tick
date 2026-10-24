@@ -14,6 +14,7 @@ import {
   trimTarget,
   summarizeAction,
   nudgeText,
+  unwrapVolatile,
 } from './index.js'
 
 let passed = 0
@@ -155,6 +156,15 @@ ok('nudgeText 超长截断', () => {
   const text = nudgeText({ locale: 'zh', elapsedMs: 60000, intervalMs: 300000, detail: true, actions, actionCount: 8 })
   assert.ok(text.length <= 700)
   assert.ok(text.endsWith('…'))
+})
+
+// ---- 活引用拆包
+ok('unwrapVolatile 拆开 cosmokit 活引用', () => {
+  const ref = { get: () => 300000 }
+  assert.equal(unwrapVolatile(ref), 300000)
+  assert.equal(unwrapVolatile(42), 42)
+  assert.equal(unwrapVolatile(undefined), undefined)
+  assert.deepEqual(unwrapVolatile({ a: 1 }), { a: 1 })
 })
 
 // ---- 配置

@@ -237,11 +237,30 @@ function defaultConfig() {
   return merged
 }
 
+/**
+ * volatile 字段在 `ctx.config` 里不是原始值，而是 cosmokit 的活引用
+ * `{ get: () => current, [write]() }`（设置页改字段时改写的是同一个引用）。
+ * 取值必须拆开，否则 `typeof x === 'number'` 永远不成立、设置形同虚设。
+ */
+export function unwrapVolatile(value) {
+  if (value && typeof value === 'object' && typeof value.get === 'function' && !(value instanceof Date)) {
+    try {
+      return value.get()
+    } catch {
+      return undefined
+    }
+  }
+  return value
+}
+
 /** 每一步都读活配置：volatile 提交不 remount，apply 里的快照会过期。 */
 function liveConfig(ctx) {
+  const merged = defaultConfig()
   const current = ctx?.config
-  if (current && typeof current === 'object') return { ...defaultConfig(), ...current }
-  return defaultConfig()
+  if (current && typeof current === 'object') {
+    for (const [key, value] of Object.entries(current)) merged[key] = unwrapVolatile(value)
+  }
+  return merged
 }
 
 function isSubagent(agent) {
