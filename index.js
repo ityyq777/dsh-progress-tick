@@ -24,6 +24,8 @@ export const name = 'progress-tick'
 const MIN_INTERVAL_MS = 10_000 // 10s
 const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
+/** 版本号（供 /api 与启动标记使用）。 */
+const VERSION = '0.4.0'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 8
 const MAX_BACKOFF_EXPONENT = 3 // 间隔最多放大 8×（factor 默认 2）
@@ -292,6 +294,10 @@ function getState(sessionId) {
     sessionId,
     anchor: 0,
     done: true,
+    turnStartedAt: 0,
+    lastNudgeAt: 0,
+    title: '',
+    cwd: '',
     nudges: 0,
     pendingChars: 0,
     actions: [],
@@ -351,7 +357,7 @@ async function writeBootMarker(config) {
     await fsp.writeFile(join(dir, '_boot.json'), `${JSON.stringify({
       pid: process.pid,
       at: new Date().toISOString(),
-      version: '0.3.5',
+      version: VERSION,
       intervalMinutes: config.intervalMinutes,
       enabled: config.enabled,
     }, null, 2)}\n`, 'utf8')
@@ -447,6 +453,95 @@ function appendNotice(decision, text) {
  * dsh-settings 的 schema(entry) 返回 undefined —— 设置页就不会出现表单。
  * 保持「命名空间即插件」（apply + Config + name）才能被设置页识别。
  */
+
+/** 从一条 user message 里抽纯文本（content 可能是字符串或 block 数组）。 */
+function messageText(message) {
+  if (!message) return ''
+  if (typeof message === 'string') return message
+  const content = message.content ?? message
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content.map((part) => (typeof part === 'string' ? part : part?.text ?? '')).join(' ')
+  }
+  return ''
+}
+
+function isLoopbackRequest(req) {
+  const address = req?.socket?.remoteAddress ?? ''
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1' || address === ''
+}
+
+function sendJson(res, status, value) {
+  const body = JSON.stringify(value)
+  res.statusCode = status
+  res.setHeader('content-type', 'application/json; charset=utf-8')
+  res.setHeader('cache-control', 'no-store')
+  res.end(body)
+}
+
+/** 汇总所有被跟踪会话的运行时长与下次提醒倒计时。 */
+export function statusSnapshot(config) {
+  const now = Date.now()
+  const base = resolveIntervalMs(config)
+  const threshold = Math.max(2, Number(config.stuckThreshold ?? 3))
+  const sessions = []
+  for (const state of states.values()) {
+    const interval = effectiveIntervalMs(base, state.nudges, config)
+    const nextAt = state.anchor ? state.anchor + interval : 0
+    sessions.push({
+      id: state.sessionId,
+      short: String(state.sessionId).replace(/^session-/, '').slice(0, 8),
+      title: state.title ?? '',
+      cwd: state.cwd ?? '',
+      running: !state.done,
+      nudges: state.nudges,
+      intervalMs: interval,
+      elapsedMs: state.turnStartedAt ? Math.max(0, now - state.turnStartedAt) : 0,
+      sinceReportMs: state.anchor ? Math.max(0, now - state.anchor) : 0,
+      nextInMs: nextAt ? Math.max(0, nextAt - now) : 0,
+      overdue: Boolean(nextAt) && now >= nextAt && !state.done,
+      stuck: state.repeat >= threshold,
+      lastAction: state.actions.length ? state.actions[state.actions.length - 1] : null,
+      lastNudgeAt: state.lastNudgeAt || 0,
+      updatedAt: state.updatedAt || 0,
+    })
+  }
+  sessions.sort((a, b) => Number(b.running) - Number(a.running) || b.elapsedMs - a.elapsedMs)
+  return {
+    version: VERSION,
+    now,
+    enabled: config.enabled !== false,
+    intervalMinutes: Math.round((base / 60_000) * 10) / 10,
+    maxNudgesPerTurn: Number(config.maxNudgesPerTurn ?? 0) || 0,
+    sessions,
+  }
+}
+
+function registerStatusRoute(ctx, baseConfig) {
+  // webServer 是可选服务：用 ctx.inject 起一个子 fiber，没有 web server 的宿主上直接跳过。
+  if (typeof ctx.inject !== 'function') return
+  const route = {
+    kind: 'exact',
+    path: '/api/progress-tick/status',
+    handler: (req, res) => {
+      try {
+        if (!isLoopbackRequest(req)) return sendJson(res, 403, { ok: false, error: 'forbidden: loopback-only' })
+        const config = liveConfig(baseConfig)
+        sendJson(res, 200, { ok: true, value: statusSnapshot(config) })
+      } catch (error) {
+        sendJson(res, 500, { ok: false, error: String(error?.message ?? error) })
+      }
+    },
+  }
+  try {
+    ctx.inject(['webServer'], (scope) => {
+      scope.effect(() => scope.webServer.register(route), 'progress-tick: status route')
+    })
+  } catch (error) {
+    ctxLog.warn?.(`status route skipped: ${error?.message ?? error}`)
+  }
+}
+
 export async function apply(ctx, initialConfig) {
   bindLogger(ctx)
   // cordis 的 ctx 是代理：未 inject 的属性（含 ctx.config）访问即抛
@@ -464,7 +559,10 @@ export async function apply(ctx, initialConfig) {
       const state = getState(agent.session.id)
       if (payload.status === 'running') {
         state.done = false
+        state.turnStartedAt = Date.now()
         state.anchor = Date.now()
+        const cwd = agent.session.header?.cwd
+        if (typeof cwd === 'string' && cwd) state.cwd = cwd
         state.nudges = 0
         state.pendingChars = 0
         state.actions = []
@@ -532,6 +630,7 @@ export async function apply(ctx, initialConfig) {
         appendNotice(decision, text)
 
         state.nudges += 1
+        state.lastNudgeAt = now
         state.anchor = now
         state.pendingChars = 0
         state.force = false
@@ -545,6 +644,9 @@ export async function apply(ctx, initialConfig) {
       return decision
     })()
   })
+
+  // 状态页数据源：GET /api/progress-tick/status（只读、仅回环地址）。
+  registerStatusRoute(ctx, baseConfig)
 
   // session/event：Host 没有 tool 事件，最近动作 / 子 agent 状态都从这里取。
   ctx.on('session/event', (session, event) => {
@@ -568,11 +670,16 @@ export async function apply(ctx, initialConfig) {
         return
       }
 
-      const state = states.get(sessionId)
-      if (!state) return
+      const state = getState(sessionId)
 
       if (event.type === 'user/message') {
-        state.locale = pickLocale(JSON.stringify(event.data?.message ?? ''), config)
+        // 真实载荷：event.data 本身就是消息（含 content 数组），部分版本包在 data.message 里。
+        const message = event.data?.message ?? event.data
+        state.locale = pickLocale(JSON.stringify(message ?? ''), config)
+        if (!state.title) {
+          const text = messageText(message).replace(/\s+/g, ' ').trim()
+          if (text) state.title = text.length > 60 ? `${text.slice(0, 60)}…` : text
+        }
         return
       }
       if (event.type === 'tool/call') {

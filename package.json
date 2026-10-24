@@ -1,6 +1,6 @@
 {
   "name": "dsh-progress-tick",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "description": "主 agent 长任务执行期间定期向用户播报进度：可配间隔/退避/卡住检测/中英文案/子 agent 摘要，设置面板内置表单，含 /progress 命令，仅主 agent。",
   "type": "module",
   "main": "./index.js",

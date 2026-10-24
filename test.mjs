@@ -16,6 +16,7 @@ import {
   summarizeAction,
   nudgeText,
   unwrapVolatile,
+  statusSnapshot,
 } from './index.js'
 
 let passed = 0
@@ -254,3 +255,17 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
 }
 
 console.log(`✓ ${passed} 项断言通过`)
+
+// --- 状态页数据源（/api/progress-tick/status） ---
+{
+  const snapshot = statusSnapshot({ intervalMinutes: 5, stuckThreshold: 3 })
+  assert.equal(typeof snapshot.now, 'number')
+  assert.ok(snapshot.now > 0)
+  assert.equal(Array.isArray(snapshot.sessions), true)
+  assert.equal(snapshot.sessions.length, 0)
+  assert.equal(snapshot.intervalMinutes, 5)
+  assert.equal(snapshot.enabled, true)
+  const disabled = statusSnapshot({ intervalMinutes: 5, enabled: false })
+  assert.equal(disabled.enabled, false)
+}
+console.log('progress-tick: all assertions passed')

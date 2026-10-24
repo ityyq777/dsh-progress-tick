@@ -39,6 +39,32 @@ window.__ModuleLoader__.load({
       const el = document.createElement('style')
       el.id = STYLE_ID
       el.textContent = `
+    .ptick-page{--ptick-accent:rgb(17,168,155);--ptick-line:var(--dsw-alias-border-l2,color-mix(in oklab,currentColor 16%,transparent));--ptick-surface:var(--dsw-alias-bg-layer-3,color-mix(in oklab,currentColor 4%,transparent));display:flex;flex-direction:column;height:100%;box-sizing:border-box;overflow:auto;color:inherit;font-size:13px;background:var(--dsw-alias-bg-layer-2,color-mix(in oklab,currentColor 4%,transparent));padding:24px 28px}
+    .ptick-inner{display:flex;flex-direction:column;gap:16px;width:100%;max-width:1040px;margin:0 auto}
+    .ptick-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .ptick-page-title{font-size:18px;font-weight:650;letter-spacing:.2px}
+    .ptick-page-sub{margin-top:4px;font-size:12px;opacity:.62;line-height:1.5}
+    .ptick-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:12px;border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 5%,transparent)}
+    .ptick-pill b{font-weight:650}
+    .ptick-list{display:flex;flex-direction:column;gap:10px}
+    .ptick-card2{border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 4%,transparent);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;transition:border-color .15s ease,background .15s ease}
+    .ptick-card2:hover{border-color:color-mix(in oklab,currentColor 26%,transparent)}
+    .ptick-card2-top{display:flex;align-items:center;gap:10px;min-width:0}
+    .ptick-dot{width:8px;height:8px;border-radius:999px;flex:none;background:color-mix(in oklab,currentColor 30%,transparent)}
+    .ptick-dot.is-live{background:var(--ptick-accent);box-shadow:0 0 0 0 color-mix(in oklab,var(--ptick-accent) 55%,transparent);animation:ptick-pulse 1.8s ease-out infinite}
+    @keyframes ptick-pulse{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--ptick-accent) 50%,transparent)}100%{box-shadow:0 0 0 7px color-mix(in oklab,var(--ptick-accent) 0%,transparent)}}
+    .ptick-card2-title{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+    .ptick-card2-where{font-size:11.5px;opacity:.5;font-family:var(--dsw-font-family,inherit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38%}
+    .ptick-card2-meta{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;opacity:.78}
+    .ptick-card2-meta span{white-space:nowrap}
+    .ptick-card2-meta b{font-weight:650;font-variant-numeric:tabular-nums}
+    .ptick-bar{height:5px;border-radius:999px;background:color-mix(in oklab,currentColor 10%,transparent);overflow:hidden}
+    .ptick-bar-fill{height:100%;border-radius:999px;background:var(--ptick-accent);transition:width .5s linear}
+    .ptick-card2-foot{display:flex;justify-content:space-between;gap:12px;font-size:11.5px;opacity:.55;flex-wrap:wrap}
+    .ptick-empty{border:1px dashed var(--ptick-line);border-radius:12px;padding:34px 20px;text-align:center;opacity:.7;font-size:12.5px;background:color-mix(in oklab,currentColor 3%,transparent)}
+    .ptick-badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 8%,transparent);opacity:.85}
+    .ptick-badge.warn{color:rgb(196,120,26);border-color:color-mix(in oklab,rgb(196,120,26) 45%,transparent)}
+    @media (prefers-reduced-motion: reduce){.ptick-dot.is-live{animation:none}}
         .ptick-field {
           transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
         }
@@ -443,6 +469,128 @@ window.__ModuleLoader__.load({
           notice ? h('span', { style: styles.status }, notice) : null))
     }
 
+
+    //#region 状态页（左侧栏一级入口）
+    function formatDuration(ms) {
+      const total = Math.max(0, Math.round((Number(ms) || 0) / 1000))
+      const hours = Math.floor(total / 3600)
+      const minutes = Math.floor((total % 3600) / 60)
+      const seconds = total % 60
+      if (hours > 0) return `${hours} 小时 ${minutes} 分`
+      if (minutes > 0) return `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
+      return `${seconds} 秒`
+    }
+
+    function formatCountdown(ms) {
+      const total = Math.max(0, Math.round((Number(ms) || 0) / 1000))
+      const minutes = Math.floor(total / 60)
+      const seconds = total % 60
+      if (minutes > 0) return `${minutes}:${String(seconds).padStart(2, '0')}`
+      return `0:${String(seconds).padStart(2, '0')}`
+    }
+
+    function basename(path) {
+      const text = String(path || '')
+      const parts = text.split(/[\\/]/).filter(Boolean)
+      return parts.length ? parts[parts.length - 1] : ''
+    }
+
+    function StatusIcon({ size }) {
+      return h('svg', {
+        'data-dsh-panel-entry': 'progress-tick',
+        viewBox: '0 0 16 16',
+        width: size,
+        height: size,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.5,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+      },
+      h('circle', { cx: 8, cy: 8, r: 6.2 }),
+      h('path', { d: 'M8 4.6v3.6l2.6 1.5' }),
+      h('path', { d: 'M2.2 8a5.8 5.8 0 0 1 1.6-4' }))
+    }
+
+    function StatusCard({ item }) {
+      const interval = Math.max(1, Number(item.intervalMs) || 1)
+      const ratio = Math.min(1, Math.max(0, (Number(item.sinceReportMs) || 0) / interval))
+      const where = basename(item.cwd) || item.short
+      const action = item.lastAction && item.lastAction.name ? item.lastAction.name : ''
+      return h('div', { className: 'ptick-card2' },
+        h('div', { className: 'ptick-card2-top' },
+          h('i', { className: item.running ? 'ptick-dot is-live' : 'ptick-dot' }),
+          h('div', { className: 'ptick-card2-title', title: item.title || item.id }, item.title || `会话 ${item.short}`),
+          h('div', { className: 'ptick-card2-where' }, where)),
+        h('div', { className: 'ptick-card2-meta' },
+          h('span', null, '已运行 ', h('b', null, item.running ? formatDuration(item.elapsedMs) : '已结束')),
+          h('span', null, item.running ? '下次提醒 ' : '最后提醒 ', h('b', null, item.running ? formatCountdown(item.nextInMs) : item.nudges > 0 ? '—' : '未触发')),
+          h('span', null, '本轮提醒 ', h('b', null, String(item.nudges || 0)))),
+        item.running ? h('div', { className: 'ptick-bar' }, h('div', { className: 'ptick-bar-fill', style: { width: `${Math.round(ratio * 100)}%` } })) : null,
+        h('div', { className: 'ptick-card2-foot' },
+          h('span', null, action ? `最近动作 · ${action}` : '还没有工具动作'),
+          h('div', { style: { display: 'flex', gap: 6 } },
+            item.stuck ? h('span', { className: 'ptick-badge warn' }, '疑似卡住') : null,
+            item.overdue ? h('span', { className: 'ptick-badge warn' }, '待提醒') : null,
+            h('span', { className: 'ptick-badge' }, `${Math.round(interval / 60000 * 10) / 10} 分钟节奏`))))
+    }
+
+    function StatusPage() {
+      const [result, setResult] = React.useState({ phase: 'loading' })
+      React.useEffect(() => {
+        let alive = true
+        const load = async () => {
+          try {
+            const response = await fetch('api/progress-tick/status', { headers: { accept: 'application/json' } })
+            const payload = await response.json().catch(() => null)
+            if (!alive) return
+            if (!response.ok || !payload?.ok) {
+              setResult({ phase: 'error', message: payload?.error || `HTTP ${response.status}` })
+              return
+            }
+            setResult({ phase: 'ready', value: payload.value })
+          } catch (error) {
+            if (alive) setResult({ phase: 'error', message: String(error?.message ?? error) })
+          }
+        }
+        void load()
+        const timer = setInterval(() => { void load() }, 4000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [])
+
+      const value = result.value
+      const sessions = Array.isArray(value?.sessions) ? value.sessions : []
+      const running = sessions.filter((item) => item.running)
+      const ordered = running.concat(sessions.filter((item) => !item.running)).slice(0, 20)
+
+      return h('div', { className: 'ptick-page' },
+        h('div', { className: 'ptick-inner' },
+        h('div', { className: 'ptick-page-head' },
+          h('div', null,
+            h('div', { className: 'ptick-page-title' }, '进度播报'),
+            h('div', { className: 'ptick-page-sub' },
+              value
+                ? `主 agent 在连续执行且没有汇报时，每 ${value.intervalMinutes} 分钟自动收到一次进度提醒；这里实时显示各会话的运行时长和下次提醒倒计时。`
+                : '主 agent 在连续执行且没有汇报时，会按设定间隔自动收到进度提醒。')),
+          h('div', { className: 'ptick-pill' },
+            h('i', { className: running.length > 0 ? 'ptick-dot is-live' : 'ptick-dot' }),
+            '运行中 ', h('b', null, String(running.length)), ' 个会话')),
+
+        result.phase === 'loading' && !value ? h('div', { className: 'ptick-empty' }, '正在读取…') : null,
+        result.phase === 'error' ? h('div', { className: 'ptick-empty' }, `读取失败：${result.message}`) : null,
+        ordered.length === 0
+          ? (result.phase === 'ready'
+            ? h('div', { className: 'ptick-empty' }, '当前没有正在执行的会话。发起一个任务后，这里会显示它的运行时长与下次提醒倒计时。')
+            : null)
+          : h('div', { className: 'ptick-list' }, ordered.map((item) => h(StatusCard, { key: item.id, item }))),
+
+        h('div', { className: 'ptick-card2-foot', style: { paddingLeft: 2, opacity: 0.45 } },
+          h('span', null, value ? `dsh-progress-tick v${value.version} · 数据每 4 秒刷新` : ''),
+          h('span', null, '仅主 agent 会被提醒；子 agent 只计入父会话的摘要'))))
+    }
+    //#endregion
+
     function apply(ctx) {
       ensureStyle()
       // 客户端 ctx 是代理：未在 inject 里声明的属性（如 slots）读取即抛
@@ -456,6 +604,21 @@ window.__ModuleLoader__.load({
         }, () => h(Section, { ctx })))
       } catch (error) {
         console.error('[progress-tick] settings section registration failed:', error)
+      }
+      // 左侧栏一级入口 + 对应页面（与 SSH / 任务看板同一套 slot 契约）。
+      try {
+        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          name: 'sidebar.panellist',
+          id: 'progress-tick',
+          order: 60,
+          label: () => '进度播报',
+        }, StatusIcon))
+        ctx.slots.inject('main', () => ctx.slots.register({
+          name: 'main',
+          key: 'progress-tick',
+        }, StatusPage))
+      } catch (error) {
+        console.error('[progress-tick] sidebar page registration failed:', error)
       }
     }
 
