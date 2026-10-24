@@ -1,5 +1,6 @@
 // 零依赖自测：node test.mjs（需 NODE_PATH 指向 dsh profile 的 node_modules 以解析 schemastery）
 import assert from 'node:assert/strict'
+import * as moduleNamespace from './index.js'
 import {
   Config,
   parseDuration,
@@ -192,6 +193,13 @@ ok('Config 字段齐全', () => {
   const dict = Config.dict ?? {}
   for (const key of required) assert.ok(dict[key], `missing ${key}`)
   for (const key of required) assert.equal(dict[key].meta?.volatile, true, `${key} 未标记 volatile`)
+})
+
+// ---- 模块形状：决定设置页能不能拿到 Config
+ok('模块无 default export，且命名空间带 apply + Config', () => {
+  assert.equal('default' in moduleNamespace, false, 'default export 会让 loader unwrap 成函数，Config 丢失')
+  assert.equal(typeof moduleNamespace.apply, 'function')
+  assert.equal(typeof moduleNamespace.Config?.toJSON, 'function')
 })
 
 console.log(`✓ ${passed} 项断言通过`)

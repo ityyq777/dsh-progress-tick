@@ -423,6 +423,13 @@ function appendNotice(decision, text) {
   })
 }
 
+/*
+ * 关键：本模块**不能**再有 `export default`。
+ * cordis-plugin-loader 的 unwrapExports 是 `exports.default ?? exports`，
+ * 一旦有 default，runtime 就变成那个函数，`fiber.runtime.Config` 不存在，
+ * dsh-settings 的 schema(entry) 返回 undefined —— 设置页就不会出现表单。
+ * 保持「命名空间即插件」（apply + Config + name）才能被设置页识别。
+ */
 export async function apply(ctx) {
   bindLogger(ctx)
 
@@ -587,5 +594,3 @@ export async function apply(ctx) {
     states.clear()
   })
 }
-
-export default apply
