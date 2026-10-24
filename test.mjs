@@ -222,4 +222,32 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
   passed += 1
 }
 
+// ---- 客户端 entry：ctx 同样是代理，未 inject 的属性读取即抛
+{
+  let plugin = null
+  globalThis.window = {
+    __ModuleLoader__: {
+      load: ({ id, factory }) => { plugin = factory(() => ({ createElement: (...args) => ({ args }) })) },
+    },
+  }
+  await import('./client/client.js')
+  assert.equal(plugin.inject.includes('slots'), true, 'client entry 必须 inject slots')
+  const calls = []
+  const ctx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'slots') return {
+        inject: (name, fn) => { calls.push(['inject', name]); return fn() },
+        register: (meta, render) => { calls.push(['register', meta.name, meta.id]); return () => {} },
+      }
+      if (prop === 'get') return () => undefined
+      if (prop === 'effect') return () => {}
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  plugin.apply(ctx)
+  assert.deepEqual(calls[1], ['register', 'settings.section', 'progress-tick'])
+  passed += 1
+  delete globalThis.window
+}
+
 console.log(`✓ ${passed} 项断言通过`)
