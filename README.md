@@ -37,6 +37,7 @@ reports.
 | `intervalMinutes` elapse without an informative report | One `notice` is appended before the next request |
 | The model writes an **informative** report | Timer re-anchors (see below) |
 | The run finishes before the interval | Timer resets; the next run starts from zero |
+| The user sends a message mid-run (`source.kind === 'user'`) | No nudge on that step — the step already carries a fresh human message, so the timer simply re-anchors |
 | Subagents / teammates | Never nudged (`delegationDepth > 0` or `origin === 'subagent'`) |
 
 ### What counts as "already reported"

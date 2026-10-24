@@ -25,7 +25,7 @@ const MIN_INTERVAL_MS = 10_000 // 10s
 const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.4.0'
+const VERSION = '0.4.1'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 8
 const MAX_BACKOFF_EXPONENT = 3 // 间隔最多放大 8×（factor 默认 2）
@@ -616,6 +616,17 @@ export async function apply(ctx, initialConfig) {
         if (state.done && !state.force) return decision
 
         const now = Date.now()
+
+        // 用户刚插话：本 step 已经带着新的人类消息，再塞一条“你 N 分钟没汇报”
+        // 和用户刚说的话自相矛盾。重锚即可，并作废 /progress 的待发提醒。
+        if (decision.messages.some((message) => message?.source?.kind === 'user')) {
+          state.anchor = now
+          state.pendingChars = 0
+          state.force = false
+          state.updatedAt = now
+          return decision
+        }
+
         const base = resolveIntervalMs(config)
         const interval = effectiveIntervalMs(base, state.nudges, config)
         const max = Number(config.maxNudgesPerTurn ?? 0) || 0

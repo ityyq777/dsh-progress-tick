@@ -254,6 +254,54 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
   delete globalThis.window
 }
 
+// ---- 回归（A4）：用户刚插话的 step 不再注入“你没汇报”
+// 真实宿主会把 decision.messages 一起 append 成 user/message，所以这里断言：
+// 带 source.kind==='user' 的 step 不塞 progress-tick 提醒，且计时重锚。
+{
+  const handlers = new Map()
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handlers.set(name, fn) }
+      if (prop === 'get') return () => undefined
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const config = { statusFile: false, intervalMinutes: 0.17, backoffAfter: 99, detailEvery: 1 }
+  await moduleNamespace.apply(fakeCtx, config)
+
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    const agent = { session: { id: 'session-a4', header: {} } }
+    handlers.get('agent/status')({ agent, status: 'running' })
+    clock += 11_000
+
+    const first = { kind: 'enter', messages: [] }
+    await handlers.get('agent/pre-step')({ agent }, async () => first)
+    assert.equal(first.messages.filter((m) => m.source?.kind === 'progress-tick').length, 1, '静默超时应提醒一次')
+
+    clock += 11_000
+    const second = {
+      kind: 'enter',
+      messages: [{ id: 'u1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '现在怎么样？' }] }],
+    }
+    await handlers.get('agent/pre-step')({ agent }, async () => second)
+    assert.equal(second.messages.length, 1, '用户插话时不应再注入提醒')
+
+    const row = statusSnapshot(config).sessions.find((item) => item.id === 'session-a4')
+    assert.ok(row, '状态快照里应能看到该会话')
+    assert.ok(row.sinceReportMs < 1000, '用户插话后应重锚计时')
+    passed += 1
+  } finally {
+    Date.now = realNow
+    // 清掉本用例留下的会话状态，后面「状态页空快照」的断言才成立
+    handlers.get('dispose')?.()
+  }
+}
+
 console.log(`✓ ${passed} 项断言通过`)
 
 // --- 状态页数据源（/api/progress-tick/status） ---
