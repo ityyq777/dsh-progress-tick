@@ -45,9 +45,15 @@ Both are configurable.
 
 ## Configuration
 
-Every field is `volatile`, so it can be changed in
-**Settings → Plugins → progress-tick** and takes effect on the next step — no
-restart, no remount.
+The plugin registers its own section in the Settings panel — **Settings →
+进度播报** (order 60, right after the built-in sections) — with a generated form
+over this table. The same slot (`settings.section`) is the one `dshmarket` uses,
+so it shows up wherever that panel is installed.
+
+Saving from the form goes through `remote.settings.mutate()` with revision
+fencing; **恢复默认** unsets the fields you overrode. Every field is
+`volatile`, so a saved change applies on the next step — no restart, no remount.
+You can still edit the values by hand in the profile patch if you prefer.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
