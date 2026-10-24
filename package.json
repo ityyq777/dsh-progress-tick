@@ -1,7 +1,7 @@
 {
   "name": "dsh-progress-tick",
-  "version": "0.1.0",
-  "description": "主 agent 长任务执行期间每 5 分钟自动向用户播报一次进度（仅主 agent，不含子 agent）。",
+  "version": "0.2.0",
+  "description": "主 agent 长任务执行期间定期向用户播报进度：可配间隔/退避/卡住检测/中英文案/子 agent 摘要，含 /progress 命令，仅主 agent。",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -19,7 +19,9 @@
     "deepseek-harness",
     "progress",
     "notification",
-    "agent"
+    "agent",
+    "settings",
+    "volatile"
   ],
   "dsh": {
     "bundle": {
