@@ -487,6 +487,38 @@ ok('statusSnapshot 空注册表结构', () => {
   assert.equal(snap.intervalMinutes, 5)
 })
 
+// ---- 最近汇报正文：按 reportHistoryCount 截断并保持最新在前
+{
+  const handled = new Map()
+  const fakeCtx2 = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handled.set(name, fn) }
+      if (prop === 'get') return () => undefined
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const cfg = { statusFile: false, intervalMinutes: 5, reportHistoryCount: 2 }
+  await moduleNamespace.apply(fakeCtx2, cfg)
+  try {
+    const session = { id: 'session-reports', header: { cwd: '/tmp/demo' } }
+    for (const text of ['第一条汇报', '第二条汇报', '第三条汇报']) {
+      handled.get('session/event')(session, {
+        type: 'assistant/message',
+        data: { message: { role: 'assistant', content: [{ type: 'text', text }] } },
+      })
+    }
+    const row = statusSnapshot(cfg).sessions.find((item) => item.id === 'session-reports')
+    ok('最近汇报正文按配置条数保留', () => {
+      assert.equal(row.reports.length, 2, '按 reportHistoryCount 截断')
+      assert.equal(row.reports[0].text, '第三条汇报', '最新的在前')
+    })
+  } finally {
+    handled.get('dispose')?.()
+  }
+}
+
 // ---- 汇总（放最后，避免在追加用例之前就打印成功）
 if (process.exitCode) console.error(`✗ 存在失败断言（通过 ${passed} 项）`)
 else console.log(`✓ ${passed} 项断言通过`)

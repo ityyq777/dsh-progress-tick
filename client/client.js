@@ -99,12 +99,11 @@ window.__ModuleLoader__.load({
     .ptick-log li{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap}
     .ptick-tl li{display:flex;align-items:center;gap:8px;font-size:12px;min-width:0}
     .ptick-tl-time{font-variant-numeric:tabular-nums;opacity:.6;font-size:11.5px;white-space:nowrap}
-    .ptick-tl-dot{width:6px;height:6px;border-radius:99px;background:color-mix(in oklab,currentColor 45%,transparent);flex:none}
-    .ptick-tl-dot.is-bad{background:rgb(217,83,79)}
-    .ptick-tl-name{font-weight:600;white-space:nowrap}
-    .ptick-tl-target{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.7;font-size:11.5px;font-family:var(--dsw-font-family,monospace)}
-    .ptick-tl-ms{font-size:11px;opacity:.5;white-space:nowrap}
     .ptick-log-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.65}
+    .ptick-reports{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+    .ptick-reports li{border-left:2px solid var(--ptick-line);padding-left:10px;display:flex;flex-direction:column;gap:3px}
+    .ptick-report-time{font-variant-numeric:tabular-nums;opacity:.5;font-size:11px}
+    .ptick-report-text{font-size:12.5px;line-height:1.65;white-space:pre-wrap;opacity:.85;max-height:9em;overflow:auto}
     .ptick-log-elapsed{font-size:11.5px;opacity:.55;white-space:nowrap}
     .ptick-badge.ok{color:var(--ptick-accent);border-color:color-mix(in oklab,var(--ptick-accent) 45%,transparent)}
     .ptick-sub{border-left:2px solid var(--ptick-line);padding:4px 0 4px 10px;display:flex;flex-direction:column;gap:3px}
@@ -327,11 +326,13 @@ window.__ModuleLoader__.load({
       statusDir: ['状态目录', '留空用默认目录'],
       locale: ['语言', 'auto / zh / en'],
       commandEnabled: ['启用 /progress', '允许用 /progress 立即催一次'],
+      reportHistoryCount: ['汇报正文条数', '会话「进度」页展示最近几条 agent 汇报正文，0 = 不展示'],
     }
 
     const GROUPS = [
       { title: '基础节奏', keys: ['enabled', 'intervalMinutes'] },
       { title: '汇报判定', keys: ['minReportChars', 'reportMarkers'] },
+      { title: '展示', keys: ['reportHistoryCount'] },
       { title: '提醒策略', keys: ['maxNudgesPerTurn', 'backoffAfter', 'backoffFactor', 'detailEvery', 'includeActions', 'actionCount'] },
       { title: '卡住与子 agent', keys: ['stuckDetection', 'stuckThreshold', 'subagentSummary', 'subagentStaleMinutes'] },
       { title: '存储与命令', keys: ['statusFile', 'statusDir', 'locale', 'commandEnabled'] },
@@ -702,15 +703,6 @@ window.__ModuleLoader__.load({
         h('b', { title: typeof value === 'string' ? value : undefined }, value))
     }
 
-    function ActionRow({ action }) {
-      return h('li', null,
-        h('span', { className: action.failed ? 'ptick-tl-dot is-bad' : 'ptick-tl-dot' }),
-        h('span', { className: 'ptick-tl-time' }, clockText(action.at)),
-        h('span', { className: 'ptick-tl-name' }, action.name || 'tool'),
-        action.target ? h('code', { className: 'ptick-tl-target', title: action.target }, action.target) : null,
-        h('span', { className: 'ptick-tl-ms' }, action.ms ? formatDuration(action.ms) : ''))
-    }
-
     function SubagentNode({ node, depth }) {
       return h('div', { className: 'ptick-sub', style: { marginLeft: depth * 12 } },
         h('div', { className: 'ptick-sub-line' },
@@ -730,7 +722,7 @@ window.__ModuleLoader__.load({
     function SessionDetail({ item, now, busy, onNudge, onMute }) {
       const tool = item.currentTool
       const logs = Array.isArray(item.nudgeLog) ? item.nudgeLog.slice().reverse() : []
-      const actions = Array.isArray(item.actions) ? item.actions.slice().reverse() : []
+      const reports = Array.isArray(item.reports) ? item.reports : []
       const subagents = Array.isArray(item.subagents) ? item.subagents : []
       return h('div', { className: 'ptick-detail' },
         h('div', { className: 'ptick-detail-actions' },
@@ -771,10 +763,12 @@ window.__ModuleLoader__.load({
               h('span', { className: 'ptick-log-text', title: entry.text }, entry.text || ''))))),
 
         h('section', { className: 'ptick-sec' },
-          h('h4', null, `最近动作${actions.length ? ` · ${actions.length}` : ''}`),
-          actions.length === 0
-            ? h('div', { className: 'ptick-sec-empty' }, '还没有工具动作')
-            : h('ul', { className: 'ptick-tl' }, actions.map((action, index) => h(ActionRow, { key: `${action.at}-${index}`, action })))),
+          h('h4', null, `最近汇报${reports.length ? ` · ${reports.length}` : ''}`),
+          reports.length === 0
+            ? h('div', { className: 'ptick-sec-empty' }, '本轮还没有 agent 汇报正文')
+            : h('ul', { className: 'ptick-reports' }, reports.map((entry, index) => h('li', { key: `${entry.at}-${index}` },
+              h('div', { className: 'ptick-report-time' }, clockText(entry.at)),
+              h('div', { className: 'ptick-report-text' }, entry.text))))),
 
         h('section', { className: 'ptick-sec' },
           h('h4', null, `子 agent${subagents.length ? ` · ${subagents.length}` : ''}`),
@@ -873,7 +867,7 @@ window.__ModuleLoader__.load({
       return { toast, flash }
     }
 
-    /** 会话视图里的「进度」标签页：当前会话的提醒记录 / 动作时间线 / 子 agent。 */
+    /** 会话视图里的「进度」标签页：当前会话的提醒记录 / 最近汇报正文 / 子 agent。 */
     function ProgressView({ sessionId }) {
       const stream = useStatusStream()
       const now = useNow(1000)
@@ -890,7 +884,7 @@ window.__ModuleLoader__.load({
                 ? '正在读取…'
                 : stream.phase === 'error'
                   ? `读取失败：${stream.message}`
-                  : '这个会话还没有进度数据。主 agent 开始执行后，这里会显示提醒记录、动作时间线和子 agent 树。')),
+                  : '这个会话还没有进度数据。主 agent 开始执行后，这里会显示提醒记录、最近几次汇报正文和子 agent 树。')),
         toast ? h('div', { className: 'ptick-toast', role: 'status' }, toast) : null)
     }
 
@@ -928,7 +922,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ptick-page-title' }, '进度播报'),
               h('div', { className: 'ptick-page-sub' },
                 value
-                  ? `主 agent 连续执行且没有汇报时，每 ${value.intervalMinutes} 分钟收到一次提醒。点会话卡片进入该会话，在「进度」标签页查看提醒记录、动作时间线、当前工具耗时和子 agent 树。`
+                  ? `主 agent 连续执行且没有汇报时，每 ${value.intervalMinutes} 分钟收到一次提醒。点会话卡片进入该会话，在「进度」标签页查看提醒记录、最近几次汇报正文、当前工具耗时和子 agent 树。`
                   : '主 agent 在连续执行且没有汇报时，会按设定间隔自动收到进度提醒。')),
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
               h('div', { className: 'ptick-pill' },

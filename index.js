@@ -26,7 +26,7 @@ const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.5.1'
+const VERSION = '0.5.2'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
 const MAX_PROMPT_ACTIONS = 8
@@ -66,6 +66,7 @@ export const Config = Schema.object({
   statusFile: Schema.boolean().default(true).description('把每个 session 的计时状态写成 JSON 文件').volatile(),
   statusDir: Schema.string().default('').description('状态文件目录，留空 = ~/.dsh/progress-tick/status').volatile(),
   commandEnabled: Schema.boolean().default(true).description('注册 /progress 命令，随时让 agent 立即汇报').volatile(),
+  reportHistoryCount: Schema.number().default(3).min(0).max(10).description('详情页展示最近几条汇报正文，0 = 不展示').volatile(),
 })
 
 // ---------------------------------------------------------------- 纯函数（可测）
@@ -339,6 +340,7 @@ function getState(sessionId) {
     forceRequested: false,
     mute: false,
     nudgeLog: [],
+    reports: [],
     currentTool: null,
     pendingCalls: new Map(),
     subagents: new Map(),
@@ -709,6 +711,7 @@ export function statusSnapshot(config) {
         ms: Math.max(0, Number(action.ms) || 0),
       })),
       nudgeLog: state.nudgeLog.slice(-10),
+      reports: state.reports.slice(0, Math.max(0, Math.min(10, Number(config.reportHistoryCount ?? 3) || 0))),
       currentTool: state.currentTool
         ? { name: state.currentTool.name, target: trimTarget(state.currentTool.target, 100), at: state.currentTool.at }
         : null,
@@ -1186,6 +1189,18 @@ export async function apply(ctx, initialConfig) {
         if (!state.title) {
           const text = messageText(message).replace(/\s+/g, ' ').trim()
           if (text) state.title = text.length > 60 ? `${text.slice(0, 60)}…` : text
+        }
+        return
+      }
+      if (event.type === 'assistant/message') {
+        // 最近几次汇报正文：详情页按配置条数展示。
+        const text = messageText(event.data?.message).replace(/\s+/g, ' ').trim()
+        if (text) {
+          state.lastReportAt = Date.now()
+          state.lastReportText = text.length > 600 ? `${text.slice(0, 600)}…` : text
+          state.reports.unshift({ at: state.lastReportAt, text: text.length > 600 ? `${text.slice(0, 600)}…` : text })
+          if (state.reports.length > 10) state.reports.length = 10
+          scheduleBroadcast()
         }
         return
       }
