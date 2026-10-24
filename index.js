@@ -351,7 +351,7 @@ async function writeBootMarker(config) {
     await fsp.writeFile(join(dir, '_boot.json'), `${JSON.stringify({
       pid: process.pid,
       at: new Date().toISOString(),
-      version: '0.3.4',
+      version: '0.3.5',
       intervalMinutes: config.intervalMinutes,
       enabled: config.enabled,
     }, null, 2)}\n`, 'utf8')
