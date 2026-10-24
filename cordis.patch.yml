@@ -1,0 +1,6 @@
+- insert:
+    - id: progress-tick
+      name: 'dsh-progress-tick'
+      config:
+        enabled: true
+        intervalMinutes: 5

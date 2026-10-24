@@ -1,0 +1,40 @@
+{
+  "name": "dsh-progress-tick",
+  "version": "0.1.0",
+  "description": "主 agent 长任务执行期间每 5 分钟自动向用户播报一次进度（仅主 agent，不含子 agent）。",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "progress",
+    "notification",
+    "agent"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "engines": {
+      "dsh": ">=0.2.0-rc.1 <0.3.0"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4"
+  },
+  "license": "MIT",
+  "author": "yangyuqi",
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}
