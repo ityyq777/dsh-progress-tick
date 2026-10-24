@@ -24,10 +24,19 @@ export const name = 'progress-tick'
 const MIN_INTERVAL_MS = 10_000 // 10s
 const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
+const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.4.2'
+const VERSION = '0.5.0'
 const MAX_NUDGE_CHARS = 700
-const MAX_ACTIONS = 8
+const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
+const MAX_PROMPT_ACTIONS = 8
+const MAX_NUDGE_LOG = 12
+const MAX_BODY_BYTES = 8 * 1024
+const MAX_SSE_CLIENTS = 32
+const SSE_RETRY_MS = 3000
+const SSE_HEARTBEAT_MS = 25_000
+const RATE_WINDOW_MS = 60_000
+const RATE_LIMIT = 20
 const MAX_BACKOFF_EXPONENT = 3 // 间隔最多放大 8×（factor 默认 2）
 const DEFAULT_STATUS_DIR = join(homedir(), '.dsh', 'progress-tick', 'status')
 const CJK = /[\u4e00-\u9fff]/
@@ -48,7 +57,7 @@ export const Config = Schema.object({
   backoffFactor: Schema.number().default(2).min(1).max(8).description('拉长倍数（×2、×3 …）').volatile(),
   locale: Schema.union(['auto', 'zh', 'en']).default('auto').description('提醒文案语言；auto = 跟随用户消息语种').volatile(),
   includeActions: Schema.boolean().default(true).description('提醒里附带最近动作摘要').volatile(),
-  actionCount: Schema.number().default(3).min(0).max(MAX_ACTIONS).description('附带几条最近动作').volatile(),
+  actionCount: Schema.number().default(3).min(0).max(MAX_PROMPT_ACTIONS).description('附带几条最近动作').volatile(),
   detailEvery: Schema.number().default(2).min(1).max(50).description('每第 N 条提醒为详版（带动作摘要）').volatile(),
   stuckDetection: Schema.boolean().default(true).description('连续重复同一动作时改发“卡住了？”提醒').volatile(),
   stuckThreshold: Schema.number().default(3).min(2).max(50).description('同一动作连续几次算卡住').volatile(),
@@ -327,6 +336,11 @@ function getState(sessionId) {
     repeat: 0,
     locale: 'zh',
     force: false,
+    forceRequested: false,
+    mute: false,
+    nudgeLog: [],
+    currentTool: null,
+    pendingCalls: new Map(),
     subagents: new Map(),
     updatedAt: Date.now(),
     writtenAt: 0,
@@ -335,7 +349,7 @@ function getState(sessionId) {
   return fresh
 }
 
-function noteAction(state, name, target) {
+function noteAction(state, name, target, callId) {
   // 事件流里 target 可能很长：落状态前统一压到 160 字，避免状态文件/内存被撑大。
   const clean = trimTarget(target, 160)
   const key = `${name}:${clean}`
@@ -344,21 +358,170 @@ function noteAction(state, name, target) {
     state.repeat = 1
     state.lastKey = key
   }
-  state.actions.push({ name, target: clean, failed: false, at: Date.now() })
+  const at = Date.now()
+  const action = { name, target: clean, failed: false, at, ms: 0, callId: typeof callId === 'string' ? callId : '' }
+  state.actions.push(action)
   if (state.actions.length > MAX_ACTIONS) state.actions.shift()
-  state.updatedAt = Date.now()
+  state.currentTool = { name, target: trimTarget(clean, 160), at, callId: action.callId }
+  if (state.pendingCalls.size > 64) state.pendingCalls.clear()
+  if (action.callId) state.pendingCalls.set(action.callId, at)
+  state.updatedAt = at
+  return action
 }
 
-function markFailed(state) {
-  const last = state.actions[state.actions.length - 1]
-  if (last) {
-    last.failed = true
-    last.at = Date.now()
+function finishAction(state, callId, failed) {
+  const id = typeof callId === 'string' ? callId : ''
+  let target = null
+  if (id) target = state.actions.find((action) => action.callId === id) ?? null
+  if (!target) {
+    // 没有 callId 的旧事件形状：退回到最近一条未完成的动作。
+    for (let i = state.actions.length - 1; i >= 0; i -= 1) {
+      if (!state.actions[i].ms) {
+        target = state.actions[i]
+        break
+      }
+    }
   }
+  const at = Date.now()
+  if (target) {
+    target.failed = Boolean(failed) || target.failed
+    target.ms = Math.max(0, at - (target.at ?? at))
+  }
+  const startedAt = id ? state.pendingCalls.get(id) : undefined
+  if (startedAt !== undefined) state.pendingCalls.delete(id)
+  if (state.currentTool && (!id || state.currentTool.callId === id)) {
+    state.currentTool = null
+    if (startedAt === undefined && target) state.updatedAt = at
+  }
+  state.updatedAt = at
+}
+
+function recordNudge(state, reason, elapsedMs, text) {
+  state.nudgeLog.push({
+    at: Date.now(),
+    reason,
+    elapsedMs: Math.max(0, Math.round(elapsedMs)),
+    text: trimTarget(text, 120),
+  })
+  if (state.nudgeLog.length > MAX_NUDGE_LOG) state.nudgeLog.shift()
 }
 
 function sanitizeId(id) {
   return String(id ?? 'unknown').replace(/[^A-Za-z0-9._-]/g, '_')
+}
+
+// ---------------------------------------------------------------- 静音 / 子 agent 树
+
+/** 返回 true 表示状态真的变了（调用方据此决定是否广播）。 */
+export function setMuted(sessionId, muted) {
+  const state = states.get(sessionId)
+  if (!state) return false
+  const next = Boolean(muted)
+  if (state.mute === next) return false
+  state.mute = next
+  // 取消静音时重锚，避免立刻补发一条“你已经 N 分钟没汇报”。
+  if (!next) {
+    state.anchor = Date.now()
+    state.pendingChars = 0
+  }
+  state.updatedAt = Date.now()
+  return true
+}
+
+function childEntry(id, parentId, now) {
+  return {
+    id,
+    parentId: typeof parentId === 'string' ? parentId : '',
+    title: '',
+    done: false,
+    startedAt: now,
+    lastEventAt: now,
+    currentTool: null,
+  }
+}
+
+/** 找到子 agent 事件应该挂到哪个会话上；父会话可能本身也是子 agent（嵌套），顺藤摸瓜找到根。 */
+function findParentState(statesMap, header) {
+  const parentId = header?.parentSession
+  if (!parentId) return undefined
+  const direct = statesMap.get(parentId)
+  if (direct) return direct
+  // 父会话本身是子 agent：找到任一已知父会话，把它当作根。
+  for (const state of statesMap.values()) {
+    if (state.subagents.has(parentId)) return state
+  }
+  // 兜底：嵌套层级里父会话可能还没建状态，挂到唯一运行中的主会话。
+  for (const state of statesMap.values()) {
+    if (!state.done) return state
+  }
+  return undefined
+}
+
+/** 子 agent 的动静记到父会话上：标题、当前工具、结束状态。 */
+function noteChildEvent(statesMap, sessionId, header, event) {
+  const parent = findParentState(statesMap, header)
+  if (!parent) return undefined
+  if (!parent.subagents.has(sessionId) && parent.subagents.size >= MAX_CHILDREN) {
+    // 防跑飞：一次 fan-out 再多也只留最近 N 个。
+    const oldest = parent.subagents.keys().next().value
+    if (oldest !== undefined) parent.subagents.delete(oldest)
+  }
+  const now = Date.now()
+  const entry = parent.subagents.get(sessionId) ?? childEntry(sessionId, header?.parentSession, now)
+  entry.lastEventAt = now
+  if (event?.type === 'session/title') {
+    const title = String(event.data?.title ?? '').replace(/\s+/g, ' ').trim()
+    if (title) entry.title = title.length > 60 ? `${title.slice(0, 60)}…` : title
+  } else if (event?.type === 'tool/call') {
+    const data = event.data ?? {}
+    const callId = data.callId ?? data.id
+    entry.currentTool = {
+      name: data.name ?? 'tool',
+      target: trimTarget(actionTarget(data.name, data.arguments), 80),
+      at: now,
+      callId: typeof callId === 'string' ? callId : '',
+    }
+  } else if (event?.type === 'tool/result') {
+    entry.currentTool = null
+  } else if (event?.type === 'turn/end') {
+    entry.done = true
+    entry.currentTool = null
+  }
+  parent.subagents.set(sessionId, entry)
+  return parent
+}
+
+export function subagentTree(state, now = Date.now(), staleMs = 10 * 60_000) {
+  const children = [...state.subagents.values()]
+  if (children.length === 0) return []
+  const byId = new Map(children.map((child) => [child.id, child]))
+  const build = (child) => ({
+    id: child.id,
+    short: String(child.id).replace(/^session-/, '').slice(0, 8),
+    title: child.title || '',
+    name: child.title || `子 agent ${String(child.id).replace(/^session-/, '').slice(0, 6)}`,
+    done: Boolean(child.done),
+    stale: !child.done && now - (child.lastEventAt ?? child.startedAt ?? now) >= staleMs,
+    elapsedMs: Math.max(0, now - (child.startedAt ?? now)),
+    silentMs: Math.max(0, now - (child.lastEventAt ?? child.startedAt ?? now)),
+    currentTool: child.currentTool
+      ? {
+          name: child.currentTool.name,
+          target: child.currentTool.target,
+          elapsedMs: Math.max(0, now - (child.currentTool.at ?? now)),
+        }
+      : null,
+    children: [],
+  })
+  const built = new Map(children.map((child) => [child.id, build(child)]))
+  const roots = []
+  for (const child of children) {
+    const node = built.get(child.id)
+    const parentNode = child.parentId && child.parentId !== state.sessionId ? built.get(child.parentId) : undefined
+    if (parentNode) parentNode.children.push(node)
+    else roots.push(node)
+  }
+  return roots
 }
 
 const ctxLog = {
@@ -398,12 +561,15 @@ async function writeStatusFile(state, config) {
     sessionId: state.sessionId,
     updatedAt: new Date().toISOString(),
     running: !state.done,
+    muted: Boolean(state.mute),
     nudges: state.nudges,
     pendingChars: state.pendingChars,
     repeat: state.repeat,
     lastActionKey: state.lastKey,
+    currentTool: state.currentTool,
+    nudgeLog: state.nudgeLog,
     actions: state.actions,
-    subagents: [...state.subagents.entries()].map(([id, value]) => ({ id, ...value })),
+    subagents: [...state.subagents.values()].map((value) => ({ ...value })),
   }
   try {
     await fsp.mkdir(dir, { recursive: true })
@@ -516,12 +682,15 @@ export function statusSnapshot(config) {
     // 已达本轮上限时倒计时不会再兑现，不能继续显示“待提醒 0:00”。
     const capped = max > 0 && state.nudges >= max
     const last = state.actions.length ? state.actions[state.actions.length - 1] : null
+    const staleMs = Math.max(1, Number(config.subagentStaleMinutes ?? 10) || 10) * 60_000
     sessions.push({
       id: state.sessionId,
       short: String(state.sessionId).replace(/^session-/, '').slice(0, 8),
       title: state.title ?? '',
       cwd: state.cwd ?? '',
       running: !state.done,
+      muted: Boolean(state.mute),
+      forcePending: Boolean(state.force),
       nudges: state.nudges,
       capped,
       intervalMs: interval,
@@ -532,6 +701,18 @@ export function statusSnapshot(config) {
       stuck: state.repeat >= threshold,
       // 只回展示需要的字段：完整 target 可能包含命令里的凭证，而且每 4 秒轮询一次。
       lastAction: last ? { name: last.name, target: trimTarget(last.target, 80), failed: Boolean(last.failed), at: last.at } : null,
+      actions: state.actions.slice(-12).map((action) => ({
+        name: action.name,
+        target: trimTarget(action.target, 100),
+        failed: Boolean(action.failed),
+        at: action.at,
+        ms: Math.max(0, Number(action.ms) || 0),
+      })),
+      nudgeLog: state.nudgeLog.slice(-10),
+      currentTool: state.currentTool
+        ? { name: state.currentTool.name, target: trimTarget(state.currentTool.target, 100), at: state.currentTool.at }
+        : null,
+      subagents: subagentTree(state, now, staleMs),
       lastNudgeAt: state.lastNudgeAt || 0,
       updatedAt: state.updatedAt || 0,
     })
@@ -547,28 +728,291 @@ export function statusSnapshot(config) {
   }
 }
 
-function registerStatusRoute(ctx, baseConfig) {
+// ---------------------------------------------------------------- HTTP 面（状态页 / SSE / 操作）
+//
+// 插件的路由是 webServer 直接接管响应，不经过 dsh-client-connection 的
+// `/api` 认证桥，所以这里自己守三道门：
+//  1. 回环地址（本机浏览器）——远程/LAN 访问一律 403；
+//  2. Host 必须是 localhost 或 IP 字面量，挡住 DNS rebinding；
+//  3. 写操作额外要求同源 + JSON + 自定义头，挡住跨站简单请求。
+
+let configForBroadcast = null
+const sseClients = new Set()
+let broadcastTimer = null
+const rateBuckets = new Map()
+
+export function sseFrame(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+}
+
+export function hostAuthority(req) {
+  const host = req?.headers?.host
+  if (typeof host !== 'string' || !host) return undefined
+  try {
+    return new URL(`http://${host}`)
+  } catch {
+    return undefined
+  }
+}
+
+/** Host 必须是 localhost 或 IP 字面量：攻击者域名即使解析到 127.0.0.1 也过不了这一关。 */
+export function isTrustedHost(req) {
+  const parsed = hostAuthority(req)
+  if (!parsed) return false
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '')
+  if (hostname === 'localhost') return true
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return true
+  return /^[0-9a-f:]+$/i.test(hostname)
+}
+
+/** 同源判定：浏览器标记 cross-site 直接拒绝；有 Origin 时必须与 Host 一致。 */
+export function isSameOriginRequest(req) {
+  if (String(req?.headers?.['sec-fetch-site'] ?? '') === 'cross-site') return false
+  const origin = req?.headers?.origin
+  if (origin === undefined) return true
+  const parsed = hostAuthority(req)
+  if (!parsed) return false
+  try {
+    return new URL(origin).host === parsed.host
+  } catch {
+    return false
+  }
+}
+
+/** 写操作的完整准入判定：返回 null 表示放行。 */
+export function mutationRejection(req) {
+  if (!isLoopbackRequest(req)) return { status: 403, code: 'forbidden' }
+  if (req?.method !== 'POST') return { status: 405, code: 'method-not-allowed' }
+  if (!isTrustedHost(req) || !isSameOriginRequest(req)) return { status: 403, code: 'cross-origin' }
+  // 自定义头是 CSRF 的第二道锁：跨站表单发不出来，跨站 fetch 会先撞 CORS 预检。
+  if (String(req?.headers?.['x-progress-tick'] ?? '') !== '1') return { status: 403, code: 'missing-header' }
+  const contentType = String(req?.headers?.['content-type'] ?? '').toLowerCase()
+  if (!contentType.startsWith('application/json')) return { status: 415, code: 'content-type' }
+  const declared = Number(req?.headers?.['content-length'] ?? 0)
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return { status: 413, code: 'body-too-large' }
+  return null
+}
+
+export function allowRate(req, limit = RATE_LIMIT, windowMs = RATE_WINDOW_MS, now = Date.now()) {
+  const key = req?.socket?.remoteAddress ?? 'local'
+  const bucket = (rateBuckets.get(key) ?? []).filter((at) => now - at < windowMs)
+  if (bucket.length >= limit) {
+    rateBuckets.set(key, bucket)
+    return false
+  }
+  bucket.push(now)
+  rateBuckets.set(key, bucket)
+  if (rateBuckets.size > 64) {
+    for (const [id, times] of rateBuckets) {
+      if (!times.length || now - times[times.length - 1] >= windowMs) rateBuckets.delete(id)
+    }
+  }
+  return true
+}
+
+/** 读取并解析 JSON 请求体；超限/非法/超时都带 status 抛错。 */
+export function readJsonBody(req, limit = MAX_BODY_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    let settled = false
+    const fail = (status, code) => {
+      if (settled) return
+      settled = true
+      reject(Object.assign(new Error(code), { status }))
+    }
+    const timer = setTimeout(() => fail(408, 'timeout'), 10_000)
+    timer.unref?.()
+    const done = (fn) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn()
+    }
+    req.on('data', (chunk) => {
+      if (settled) return
+      size += chunk.length
+      if (size > limit) {
+        fail(413, 'body-too-large')
+        req.destroy?.()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => done(() => {
+      if (size === 0) return resolve(undefined)
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      } catch {
+        reject(Object.assign(new Error('invalid-json'), { status: 400 }))
+      }
+    }))
+    req.on('error', () => fail(400, 'read-error'))
+  })
+}
+
+/** 立即给所有 SSE 客户端推一份快照（提醒/状态变化时调用）。 */
+export function broadcastSnapshot() {
+  if (sseClients.size === 0 || typeof configForBroadcast !== 'function') return
+  let frame
+  try {
+    frame = sseFrame('snapshot', statusSnapshot(liveConfig(configForBroadcast())))
+  } catch (error) {
+    ctxLog.warn?.(`snapshot build failed: ${error?.message ?? error}`)
+    return
+  }
+  for (const client of sseClients) {
+    const { res } = client
+    if (res.writableEnded || res.destroyed) {
+      sseClients.delete(client)
+      continue
+    }
+    // 慢客户端丢这一帧，等下一次变化再补，避免内存堆积。
+    if (res.writableLength > 512 * 1024) continue
+    try {
+      res.write(frame)
+    } catch {
+      sseClients.delete(client)
+    }
+  }
+}
+
+/** 合并 80ms 内的多次变化（一个工具步骤会连发 call/result/stream 事件）。 */
+export function scheduleBroadcast(delayMs = 80) {
+  if (sseClients.size === 0 || broadcastTimer !== null) return
+  if (typeof configForBroadcast !== 'function') return
+  broadcastTimer = setTimeout(() => {
+    broadcastTimer = null
+    broadcastSnapshot()
+  }, Math.max(0, delayMs))
+  broadcastTimer.unref?.()
+}
+
+export function requestNudge(sessionId) {
+  const state = states.get(sessionId)
+  if (!state) return { status: 404, error: 'unknown-session' }
+  if (state.done) return { status: 409, error: 'not-running' }
+  if (state.mute) return { status: 409, error: 'muted' }
+  if (state.force) return { status: 200, value: { queued: true, already: true } }
+  state.force = true
+  state.forceRequested = true
+  state.updatedAt = Date.now()
+  scheduleBroadcast(0)
+  return { status: 200, value: { queued: true } }
+}
+
+async function handleMutation(req, res, kind) {
+  const rejection = mutationRejection(req)
+  if (rejection) return sendJson(res, rejection.status, { ok: false, error: rejection.code })
+  if (!allowRate(req)) return sendJson(res, 429, { ok: false, error: 'rate-limited' })
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (error) {
+    return sendJson(res, error?.status ?? 400, { ok: false, error: String(error?.message ?? error) })
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return sendJson(res, 400, { ok: false, error: 'invalid-body' })
+  }
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+  if (!sessionId || sessionId.length > 200) return sendJson(res, 400, { ok: false, error: 'invalid-session' })
+  if (kind === 'nudge') {
+    const result = requestNudge(sessionId)
+    return sendJson(res, result.status, result.error ? { ok: false, error: result.error } : { ok: true, value: result.value })
+  }
+  if (kind === 'mute') {
+    const muted = Boolean(body.muted)
+    const changed = setMuted(sessionId, muted)
+    if (!changed) {
+      const exists = states.has(sessionId)
+      if (!exists) return sendJson(res, 404, { ok: false, error: 'unknown-session' })
+    }
+    scheduleBroadcast(0)
+    return sendJson(res, 200, { ok: true, value: { muted } })
+  }
+  return sendJson(res, 404, { ok: false, error: 'unknown-action' })
+}
+
+function handleEvents(req, res) {
+  if (req.method !== 'GET') {
+    res.writeHead(405, { allow: 'GET', 'content-type': 'text/plain; charset=utf-8' })
+    res.end('method not allowed')
+    return
+  }
+  if (!isLoopbackRequest(req) || !isTrustedHost(req)) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('forbidden')
+    return
+  }
+  if (sseClients.size >= MAX_SSE_CLIENTS) {
+    res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('too many subscribers')
+    return
+  }
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+  })
+  res.flushHeaders?.()
+  res.write(`retry: ${SSE_RETRY_MS}\n\n`)
+  const client = { res }
+  sseClients.add(client)
+  try {
+    res.write(sseFrame('snapshot', statusSnapshot(liveConfig(configForBroadcast?.() ?? {}))))
+  } catch {
+    // 首帧失败交给 close 清理。
+  }
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded || res.destroyed) return
+    try {
+      res.write(': ping\n\n')
+    } catch {
+      // 连接已断，close 会做清理。
+    }
+  }, SSE_HEARTBEAT_MS)
+  heartbeat.unref?.()
+  const cleanup = () => {
+    clearInterval(heartbeat)
+    sseClients.delete(client)
+  }
+  req.on('close', cleanup)
+  res.on('close', cleanup)
+}
+
+function registerHttpRoutes(ctx, baseConfig) {
   // webServer 是可选服务：用 ctx.inject 起一个子 fiber，没有 web server 的宿主上直接跳过。
   if (typeof ctx.inject !== 'function') return
-  const route = {
-    kind: 'exact',
-    path: '/api/progress-tick/status',
-    handler: (req, res) => {
-      try {
-        if (!isLoopbackRequest(req)) return sendJson(res, 403, { ok: false, error: 'forbidden: loopback-only' })
-        const config = liveConfig(baseConfig)
-        sendJson(res, 200, { ok: true, value: statusSnapshot(config) })
-      } catch (error) {
-        sendJson(res, 500, { ok: false, error: String(error?.message ?? error) })
-      }
+  const routes = [
+    {
+      kind: 'exact',
+      path: '/api/progress-tick/status',
+      handler: (req, res) => {
+        try {
+          if (!isLoopbackRequest(req) || !isTrustedHost(req)) {
+            return sendJson(res, 403, { ok: false, error: 'forbidden' })
+          }
+          sendJson(res, 200, { ok: true, value: statusSnapshot(liveConfig(baseConfig)) })
+        } catch (error) {
+          sendJson(res, 500, { ok: false, error: String(error?.message ?? error) })
+        }
+      },
     },
-  }
+    { kind: 'exact', path: '/api/progress-tick/events', handler: handleEvents },
+    { kind: 'exact', path: '/api/progress-tick/nudge', handler: (req, res) => void handleMutation(req, res, 'nudge') },
+    { kind: 'exact', path: '/api/progress-tick/mute', handler: (req, res) => void handleMutation(req, res, 'mute') },
+  ]
   try {
     ctx.inject(['webServer'], (scope) => {
-      scope.effect(() => scope.webServer.register(route), 'progress-tick: status route')
+      for (const route of routes) {
+        scope.effect(() => scope.webServer.register(route), `progress-tick: ${route.path}`)
+      }
     })
   } catch (error) {
-    ctxLog.warn?.(`status route skipped: ${error?.message ?? error}`)
+    ctxLog.warn?.(`http routes skipped: ${error?.message ?? error}`)
   }
 }
 
@@ -599,12 +1043,17 @@ export async function apply(ctx, initialConfig) {
         state.repeat = 0
         state.lastKey = ''
         state.force = false
+        state.forceRequested = false
+        state.currentTool = null
+        state.pendingCalls.clear()
         state.updatedAt = Date.now()
       } else {
         state.done = true
         state.pendingChars = 0
+        state.currentTool = null
         void writeStatusFile(state, config)
       }
+      scheduleBroadcast()
     } catch (error) {
       ctxLog.warn?.(`agent/status failed: ${error?.message ?? error}`)
     }
@@ -644,6 +1093,8 @@ export async function apply(ctx, initialConfig) {
         const state = getState(agent.session.id)
         if (!state.writtenAt) writeStatusFile(state, config).catch(() => {})
         if (state.done && !state.force) return decision
+        // 本会话静音只挡自动提醒；/progress 和驾驶舱的“立即催一次”是显式意图，仍然放行。
+        if (state.mute && !state.force) return decision
 
         const now = Date.now()
 
@@ -653,6 +1104,7 @@ export async function apply(ctx, initialConfig) {
           state.anchor = now
           state.pendingChars = 0
           state.force = false
+          state.forceRequested = false
           state.updatedAt = now
           return decision
         }
@@ -664,21 +1116,26 @@ export async function apply(ctx, initialConfig) {
         const due = now - state.anchor >= interval
         if (!state.force && (!due || overLimit)) return decision
 
-        const stuck = Boolean(config.stuckDetection) && state.repeat >= Math.max(2, Number(config.stuckThreshold ?? 3))
+        // 手动催一次要能区分出来：它不受间隔/上限约束，也不该被当成“卡住”。
+        const manual = state.force && state.forceRequested
+        const stuck = !manual && Boolean(config.stuckDetection) && state.repeat >= Math.max(2, Number(config.stuckThreshold ?? 3))
         const every = Math.max(1, Number(config.detailEvery ?? 2))
         const detail = (state.nudges + 1) % every === 0
         const text = buildMessage(state, config, { stuck, detail })
         appendNotice(decision, text)
 
+        recordNudge(state, manual ? 'manual' : stuck ? 'stuck' : 'timer', state.anchor ? now - state.anchor : now - state.turnStartedAt, text)
         state.nudges += 1
         state.lastNudgeAt = now
         state.anchor = now
         state.pendingChars = 0
         state.force = false
+        state.forceRequested = false
         state.updatedAt = now
         if (stuck) state.repeat = 0
+        scheduleBroadcast()
         void writeStatusFile(state, config)
-        ctxLog.info?.(`progress-tick: nudged ${state.sessionId} (#${state.nudges}${stuck ? ', stuck' : ''})`)
+        ctxLog.info?.(`progress-tick: nudged ${state.sessionId} (#${state.nudges}${manual ? ', manual' : stuck ? ', stuck' : ''})`)
       } catch (error) {
         ctxLog.warn?.(`pre-step failed: ${error?.message ?? error}`)
       }
@@ -686,8 +1143,9 @@ export async function apply(ctx, initialConfig) {
     })()
   })
 
-  // 状态页数据源：GET /api/progress-tick/status（只读、仅回环地址）。
-  registerStatusRoute(ctx, baseConfig)
+  // 状态页 / SSE / 控制端点：GET status、GET events、POST nudge、POST mute。
+  configForBroadcast = () => baseConfig
+  registerHttpRoutes(ctx, baseConfig)
 
   // session/event：Host 没有 tool 事件，最近动作 / 子 agent 状态都从这里取。
   ctx.on('session/event', (session, event) => {
@@ -699,15 +1157,11 @@ export async function apply(ctx, initialConfig) {
       const parentId = header.parentSession
 
       if (header.origin === 'subagent' || (typeof header.delegationDepth === 'number' && header.delegationDepth > 0)) {
-        // 子 agent 自身不提醒；只把它的动静记到父 session 上。
+        // 子 agent 自身不提醒；只把它的动静记到父 session 上（树 + 当前工具耗时）。
         if (!parentId) return
-        const parent = states.get(parentId)
+        const parent = noteChildEvent(states, sessionId, header, event)
         if (!parent) return
-        const entry = parent.subagents.get(sessionId) ?? { startedAt: Date.now(), lastEventAt: Date.now(), done: false }
-        entry.lastEventAt = Date.now()
-        if (event.type === 'turn/end') entry.done = true
-        parent.subagents.set(sessionId, entry)
-        parent.updatedAt = Date.now()
+        scheduleBroadcast()
         return
       }
 
@@ -718,6 +1172,7 @@ export async function apply(ctx, initialConfig) {
         const title = String(event.data?.title ?? '').replace(/\s+/g, ' ').trim()
         if (title) state.title = title.length > 80 ? `${title.slice(0, 80)}…` : title
         state.updatedAt = Date.now()
+        scheduleBroadcast()
         return
       }
       if (event.type === 'user/message') {
@@ -736,17 +1191,23 @@ export async function apply(ctx, initialConfig) {
       }
       if (event.type === 'tool/call') {
         const data = event.data ?? {}
-        noteAction(state, data.name ?? 'tool', actionTarget(data.name, data.arguments))
+        const callId = data.callId ?? data.id
+        noteAction(state, data.name ?? 'tool', actionTarget(data.name, data.arguments), callId)
+        scheduleBroadcast()
         return
       }
       if (event.type === 'tool/result') {
         const data = event.data ?? {}
+        const callId = data.callId ?? data.id
         // 失败结果有两种形状：显式 error，或 message.isError = true（常见）。
-        if (data.error || data.message?.isError === true) markFailed(state)
+        finishAction(state, callId, Boolean(data.error || data.message?.isError === true))
+        scheduleBroadcast()
         return
       }
       if (event.type === 'turn/end') {
         state.updatedAt = Date.now()
+        state.currentTool = null
+        scheduleBroadcast()
       }
     } catch (error) {
       ctxLog.warn?.(`session/event failed: ${error?.message ?? error}`)
@@ -766,6 +1227,8 @@ export async function apply(ctx, initialConfig) {
           const state = getState(agent.session.id)
           if (state.done) return { ok: false, error: '当前没有进行中的任务' }
           state.force = true
+          state.forceRequested = true
+          scheduleBroadcast()
           return { ok: true, value: { queued: true } }
         },
       })
@@ -776,5 +1239,17 @@ export async function apply(ctx, initialConfig) {
 
   ctx.on('dispose', () => {
     states.clear()
+    configForBroadcast = null
+    if (broadcastTimer !== null) clearTimeout(broadcastTimer)
+    broadcastTimer = null
+    for (const client of sseClients) {
+      try {
+        client.res.end()
+      } catch {
+        // 已断开
+      }
+    }
+    sseClients.clear()
+    rateBuckets.clear()
   })
 }

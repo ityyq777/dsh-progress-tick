@@ -418,8 +418,6 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
   passed += 1
 }
 
-console.log(`✓ ${passed} 项断言通过`)
-
 // --- 状态页数据源（/api/progress-tick/status） ---
 {
   const snapshot = statusSnapshot({ intervalMinutes: 5, stuckThreshold: 3 })
@@ -432,4 +430,158 @@ console.log(`✓ ${passed} 项断言通过`)
   const disabled = statusSnapshot({ intervalMinutes: 5, enabled: false })
   assert.equal(disabled.enabled, false)
 }
-console.log('progress-tick: all assertions passed')
+
+// ---- 驾驶舱：HTTP 防护 / SSE 帧 / 手动催
+import { mutationRejection, isTrustedHost, isSameOriginRequest, sseFrame, requestNudge } from './index.js'
+
+function fakeReq(overrides = {}) {
+  return {
+    method: 'POST',
+    headers: { host: '127.0.0.1:3080', 'x-progress-tick': '1', 'content-type': 'application/json', ...(overrides.headers ?? {}) },
+    socket: { remoteAddress: '127.0.0.1' },
+    ...overrides,
+    headers: { host: '127.0.0.1:3080', 'x-progress-tick': '1', 'content-type': 'application/json', ...(overrides.headers ?? {}) },
+  }
+}
+
+ok('mutationRejection 放行同源合法写请求', () => {
+  assert.equal(mutationRejection(fakeReq()), null)
+})
+ok('mutationRejection 拒绝非回环来源', () => {
+  assert.equal(mutationRejection(fakeReq({ socket: { remoteAddress: '192.168.1.7' } })).code, 'forbidden')
+})
+ok('mutationRejection 拒绝 GET', () => {
+  assert.equal(mutationRejection(fakeReq({ method: 'GET' })).code, 'method-not-allowed')
+})
+ok('mutationRejection 拒绝跨站与缺自定义头', () => {
+  assert.equal(mutationRejection(fakeReq({ headers: { origin: 'https://evil.example' } })).code, 'cross-origin')
+  assert.equal(mutationRejection(fakeReq({ headers: { 'sec-fetch-site': 'cross-site' } })).code, 'cross-origin')
+  assert.equal(mutationRejection(fakeReq({ headers: { 'x-progress-tick': '' } })).code, 'missing-header')
+})
+ok('mutationRejection 拒绝非 JSON 与超限', () => {
+  assert.equal(mutationRejection(fakeReq({ headers: { 'content-type': 'text/plain' } })).code, 'content-type')
+  assert.equal(mutationRejection(fakeReq({ headers: { 'content-length': String(64 * 1024) } })).code, 'body-too-large')
+})
+ok('isTrustedHost 挡 DNS rebinding', () => {
+  assert.equal(isTrustedHost(fakeReq()), true)
+  assert.equal(isTrustedHost(fakeReq({ headers: { host: 'localhost:3080' } })), true)
+  assert.equal(isTrustedHost(fakeReq({ headers: { host: 'evil.example' } })), false)
+  assert.equal(isTrustedHost(fakeReq({ headers: { host: '[::1]:3080' } })), true)
+})
+ok('isSameOriginRequest 校验 Origin 与 sec-fetch-site', () => {
+  assert.equal(isSameOriginRequest(fakeReq()), true)
+  assert.equal(isSameOriginRequest(fakeReq({ headers: { origin: 'http://127.0.0.1:3080' } })), true)
+  assert.equal(isSameOriginRequest(fakeReq({ headers: { origin: 'http://127.0.0.1:9999' } })), false)
+})
+ok('sseFrame 是合法 SSE 帧', () => {
+  const frame = sseFrame('snapshot', { ok: true })
+  assert.match(frame, /^event: snapshot\ndata: \{"ok":true\}\n\n$/)
+})
+ok('requestNudge 未知会话返回 404', () => {
+  assert.equal(requestNudge('session-不存在').status, 404)
+})
+ok('statusSnapshot 空注册表结构', () => {
+  const snap = statusSnapshot({ intervalMinutes: 5 })
+  assert.equal(snap.ok, undefined)
+  assert.ok(Array.isArray(snap.sessions))
+  assert.equal(snap.intervalMinutes, 5)
+})
+
+// ---- 汇总（放最后，避免在追加用例之前就打印成功）
+if (process.exitCode) console.error(`✗ 存在失败断言（通过 ${passed} 项）`)
+else console.log(`✓ ${passed} 项断言通过`)
+
+// ---- 路由集成：用假 ctx 捕获 webServer 注册，直接驱动 handler
+import { EventEmitter } from 'node:events'
+
+function makeHost() {
+  const routes = []
+  const ctx = {
+    on() {},
+    logger: { info() {}, warn() {} },
+    get() { return undefined },
+    inject(_deps, fn) {
+      fn({
+        effect(register) { register() },
+        webServer: { register(route) { routes.push(route) } },
+      })
+    },
+  }
+  return { ctx, routes }
+}
+
+function fakeHttpReq({ method = 'GET', headers = {}, body } = {}) {
+  const req = new EventEmitter()
+  req.method = method
+  req.headers = { host: '127.0.0.1:3080', 'x-progress-tick': '1', 'content-type': 'application/json', ...headers }
+  req.socket = { remoteAddress: '127.0.0.1' }
+  req.destroy = () => {}
+  if (body !== undefined) {
+    const text = typeof body === 'string' ? body : JSON.stringify(body)
+    setImmediate(() => {
+      req.emit('data', Buffer.from(text))
+      req.emit('end')
+    })
+  }
+  return req
+}
+
+function fakeHttpRes() {
+  const emitter = new EventEmitter()
+  const res = {
+    statusCode: 200,
+    headers: {},
+    body: '',
+    ended: false,
+    writableEnded: false,
+    writableLength: 0,
+    setHeader(k, v) { res.headers[k] = v },
+    writeHead(status, headers) { res.statusCode = status; Object.assign(res.headers, headers ?? {}) },
+    on: emitter.on.bind(emitter),
+    off: emitter.off.bind(emitter),
+    flushHeaders() {},
+    write(chunk) { res.body += String(chunk); return true },
+    end(chunk) { if (chunk) res.body += String(chunk); res.ended = true; res.writableEnded = true },
+  }
+  return res
+}
+
+const host = makeHost()
+await moduleNamespace.apply(host.ctx, { statusFile: false, commandEnabled: false, intervalMinutes: 5 })
+assert.equal(host.routes.length, 4, '应注册 status/events/nudge/mute 四条路由')
+const byPath = new Map(host.routes.map((route) => [route.path, route]))
+
+// GET status
+{
+  const res = fakeHttpRes()
+  byPath.get('/api/progress-tick/status').handler(fakeHttpReq(), res)
+  const payload = JSON.parse(res.body)
+  assert.equal(res.statusCode, 200)
+  assert.equal(payload.ok, true)
+}
+
+// 缺自定义头 → 403
+{
+  const res = fakeHttpRes()
+  byPath.get('/api/progress-tick/nudge').handler(fakeHttpReq({ method: 'POST', headers: { 'x-progress-tick': '' }, body: { sessionId: 'x' } }), res)
+  assert.equal(res.statusCode, 403)
+  assert.equal(JSON.parse(res.body).error, 'missing-header')
+}
+
+// 未知会话 → 404
+{
+  const res = fakeHttpRes()
+  byPath.get('/api/progress-tick/nudge').handler(fakeHttpReq({ method: 'POST', body: { sessionId: 'session-nope' } }), res)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(res.statusCode, 404)
+}
+
+// SSE 头
+{
+  const res = fakeHttpRes()
+  const req = fakeHttpReq()
+  byPath.get('/api/progress-tick/events').handler(req, res)
+  assert.equal(res.headers['content-type'], 'text/event-stream; charset=utf-8')
+  assert.match(res.body, /^retry: \d+\n\nevent: snapshot\ndata: /)
+  req.emit('close')
+}
