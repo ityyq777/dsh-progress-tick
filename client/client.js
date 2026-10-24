@@ -32,12 +32,18 @@ window.__ModuleLoader__.load({
     const INK = 'inherit'
 
     const STYLE_ID = 'dsh-progress-tick-style'
+    // 样式表随版本换代：旧版本注入的 <style> 仍在页面里时按 rev 替换，
+    // 否则新加的类名没有规则，控件会退回浏览器默认样式（0.5.0 升级时踩过）。
+    const STYLE_REV = '0.5.1'
 
-    /** 交互态（hover/focus）只能靠样式表，这里注入一次。 */
     function ensureStyle() {
-      if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return
+      if (typeof document === 'undefined') return
+      const current = document.getElementById(STYLE_ID)
+      if (current && current.getAttribute('data-rev') === STYLE_REV) return
+      if (current) current.remove()
       const el = document.createElement('style')
       el.id = STYLE_ID
+      el.setAttribute('data-rev', STYLE_REV)
       el.textContent = `
     .ptick-page{--ptick-accent:rgb(17,168,155);--ptick-line:var(--dsw-alias-border-l2,color-mix(in oklab,currentColor 16%,transparent));--ptick-surface:var(--dsw-alias-bg-layer-3,color-mix(in oklab,currentColor 4%,transparent));display:flex;flex-direction:column;height:100%;box-sizing:border-box;overflow:auto;color:inherit;font-size:13px;background:var(--dsw-alias-bg-layer-2,color-mix(in oklab,currentColor 4%,transparent));padding:24px 28px}
     .ptick-inner{display:flex;flex-direction:column;gap:16px;width:100%;max-width:1040px;margin:0 auto}
@@ -64,24 +70,23 @@ window.__ModuleLoader__.load({
     .ptick-empty{border:1px dashed var(--ptick-line);border-radius:12px;padding:34px 20px;text-align:center;opacity:.7;font-size:12.5px;background:color-mix(in oklab,currentColor 3%,transparent)}
     .ptick-badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 8%,transparent);opacity:.85}
     .ptick-badge.warn{color:rgb(196,120,26);border-color:color-mix(in oklab,rgb(196,120,26) 45%,transparent)}
-    .ptick-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .ptick-search{flex:1;min-width:200px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 4%,transparent);color:inherit;font:inherit;outline:none}
-    .ptick-search:focus{border-color:var(--ptick-accent)}
-    .ptick-chips{display:flex;gap:6px;flex-wrap:wrap}
-    .ptick-chip{padding:5px 11px;border-radius:999px;border:1px solid var(--ptick-line);background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
-    .ptick-chip.is-active{background:color-mix(in oklab,var(--ptick-accent) 16%,transparent);border-color:color-mix(in oklab,var(--ptick-accent) 55%,transparent)}
+    .ptick-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}
+    .ptick-search{flex:1 1 220px;min-width:170px;height:32px;padding:0 11px;border-radius:9px;border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 5%,transparent);color:inherit;font:inherit;font-size:12.5px;outline:none;transition:border-color .15s ease,box-shadow .15s ease}
+    .ptick-search::placeholder{color:currentColor;opacity:.4}
+    .ptick-search:focus{border-color:var(--ptick-accent);box-shadow:0 0 0 3px color-mix(in oklab,var(--ptick-accent) 15%,transparent)}
+    .ptick-chips{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--ptick-line);border-radius:10px;background:color-mix(in oklab,currentColor 4%,transparent);flex-wrap:wrap}
+    .ptick-chip{border:0;border-radius:7px;padding:5px 10px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap;opacity:.72;transition:background .15s ease,opacity .15s ease}
+    .ptick-chip:hover{background:color-mix(in oklab,currentColor 9%,transparent);opacity:1}
+    .ptick-chip.is-active{background:color-mix(in oklab,var(--ptick-accent) 18%,transparent);opacity:1;font-weight:600}
+    .ptick-hint{border:1px dashed var(--ptick-line);border-radius:10px;padding:9px 12px;font-size:12px;opacity:.75;background:color-mix(in oklab,currentColor 3%,transparent)}
     .ptick-live{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;opacity:.6;white-space:nowrap}
     .ptick-card2-actions{display:flex;gap:8px;margin-left:auto;flex:none}
     .ptick-mini{height:26px;padding:0 10px;font-size:12px;border-radius:7px;border:1px solid var(--ptick-line);background:transparent;color:inherit;cursor:pointer;white-space:nowrap}
     .ptick-mini:disabled{opacity:.45;cursor:default}
     .ptick-mini.is-primary{color:#fff;background:var(--ptick-accent);border-color:transparent}
-    .ptick-drawer-wrap{position:fixed;inset:0;background:rgba(0,0,0,.28);display:flex;justify-content:flex-end;z-index:60}
-    .ptick-drawer{width:min(480px,92vw);height:100%;overflow:auto;background:var(--dsw-alias-bg-layer-1,#1b1b1b);border-left:1px solid var(--ptick-line);padding:20px 22px;display:flex;flex-direction:column;gap:16px;box-sizing:border-box;color:inherit}
-    .ptick-drawer-head{display:flex;align-items:flex-start;gap:12px}
-    .ptick-drawer-title{font-size:15px;font-weight:650}
-    .ptick-drawer-id{font-size:11px;opacity:.55;word-break:break-all;margin-top:2px}
-    .ptick-x{margin-left:auto;width:28px;height:28px;border-radius:8px;border:1px solid var(--ptick-line);background:transparent;color:inherit;font-size:16px;line-height:1;cursor:pointer;flex:none}
-    .ptick-drawer-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:10px}
+    .ptick-detail{width:100%;max-width:1040px;margin:0 auto;box-sizing:border-box;padding:20px 28px 48px;display:flex;flex-direction:column;gap:16px}
+    .ptick-detail-actions{display:flex;justify-content:flex-end;gap:8px}
+    .ptick-detail-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:10px}
     .ptick-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
     .ptick-meta span{font-size:11px;opacity:.55}
     .ptick-meta b{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -552,6 +557,14 @@ window.__ModuleLoader__.load({
       return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
     }
 
+    /** 宿主版本至少为 major.minor（用于对旧宿主隐藏需要新端点的控件）。 */
+    function versionAtLeast(version, major, minor) {
+      const parts = String(version || '').split('.').map((part) => parseInt(part, 10) || 0)
+      const majorPart = parts[0] || 0
+      if (majorPart !== major) return majorPart > major
+      return (parts[1] || 0) >= minor
+    }
+
     function basename(path) {
       const value = String(path || '')
       const parts = value.split(/[\\/]/).filter(Boolean)
@@ -713,26 +726,26 @@ window.__ModuleLoader__.load({
         (node.children || []).map((child) => h(SubagentNode, { key: child.id, node: child, depth: depth + 1 })))
     }
 
-    function SessionDrawer({ item, now, busy, onClose, onNudge, onMute }) {
+    /** 单会话进度详情：会话视图「进度」标签页的正文（不再用浮层）。 */
+    function SessionDetail({ item, now, busy, onNudge, onMute }) {
       const tool = item.currentTool
       const logs = Array.isArray(item.nudgeLog) ? item.nudgeLog.slice().reverse() : []
       const actions = Array.isArray(item.actions) ? item.actions.slice().reverse() : []
       const subagents = Array.isArray(item.subagents) ? item.subagents : []
-      return h('div', {
-        className: 'ptick-drawer-wrap',
-        role: 'dialog',
-        'aria-modal': 'true',
-        'aria-label': item.title || item.id,
-        onClick: onClose,
-      },
-      h('aside', { className: 'ptick-drawer', onClick: (event) => event.stopPropagation() },
-        h('div', { className: 'ptick-drawer-head' },
-          h('div', { style: { minWidth: 0 } },
-            h('div', { className: 'ptick-drawer-title' }, item.title || `会话 ${item.short}`),
-            h('div', { className: 'ptick-drawer-id' }, item.id)),
-          h('button', { className: 'ptick-x', 'aria-label': '关闭详情', onClick: onClose }, '×')),
+      return h('div', { className: 'ptick-detail' },
+        h('div', { className: 'ptick-detail-actions' },
+          h('button', {
+            className: 'ptick-btn ptick-btn-primary',
+            disabled: !item.running || busy,
+            onClick: () => onNudge(item),
+          }, busy ? '发送中…' : '立即催一次'),
+          h('button', {
+            className: 'ptick-btn',
+            disabled: busy,
+            onClick: () => onMute(item),
+          }, item.muted ? '取消静音' : '本会话静音')),
 
-        h('div', { className: 'ptick-drawer-meta' },
+        h('div', { className: 'ptick-detail-meta' },
           h(Meta, { label: '状态', value: item.running ? '运行中' : '已结束' }),
           h(Meta, { label: '已运行', value: item.running ? formatDuration(item.elapsedMs) : '—' }),
           h(Meta, { label: '本轮提醒', value: `${item.nudges || 0} 次` }),
@@ -745,18 +758,6 @@ window.__ModuleLoader__.load({
             h('span', null, '当前工具 · ', h('b', null, `${tool.name} · ${formatDuration(Math.max(0, now - tool.at))}`)),
             tool.target ? h('code', null, tool.target) : null)
           : h('div', { className: 'ptick-sec-empty' }, item.running ? '当前没有正在执行的工具' : '任务已结束'),
-
-        h('div', { className: 'ptick-actions' },
-          h('button', {
-            className: 'ptick-btn ptick-btn-primary',
-            disabled: !item.running || busy,
-            onClick: () => onNudge(item),
-          }, busy ? '发送中…' : '立即催一次'),
-          h('button', {
-            className: 'ptick-btn',
-            disabled: busy,
-            onClick: () => onMute(item),
-          }, item.muted ? '取消静音' : '本会话静音')),
 
         h('section', { className: 'ptick-sec' },
           h('h4', null, '提醒记录'),
@@ -779,14 +780,13 @@ window.__ModuleLoader__.load({
           h('h4', null, `子 agent${subagents.length ? ` · ${subagents.length}` : ''}`),
           subagents.length === 0
             ? h('div', { className: 'ptick-sec-empty' }, '没有子 agent')
-            : subagents.map((node) => h(SubagentNode, { key: node.id, node, depth: 0 })))))
+            : subagents.map((node) => h(SubagentNode, { key: node.id, node, depth: 0 }))))
     }
 
     function StatusCard({ item, now, busy, onOpen, onNudge, onMute }) {
       const interval = Math.max(1, Number(item.intervalMs) || 1)
       const ratio = Math.min(1, Math.max(0, (Number(item.sinceReportMs) || 0) / interval))
       const where = basename(item.cwd) || item.short
-      const action = item.lastAction && item.lastAction.name ? item.lastAction.name : ''
       const tool = item.currentTool
       const open = () => onOpen(item)
       return h('div', {
@@ -825,7 +825,6 @@ window.__ModuleLoader__.load({
         : null,
       item.running ? h('div', { className: 'ptick-bar' }, h('div', { className: 'ptick-bar-fill', style: { width: `${Math.round(ratio * 100)}%` } })) : null,
       h('div', { className: 'ptick-card2-foot' },
-        h('span', null, action ? `最近动作 · ${action}` : '还没有工具动作'),
         h('div', { style: { display: 'flex', gap: 6 } },
           item.muted ? h('span', { className: 'ptick-badge' }, '已静音') : null,
           item.stuck ? h('span', { className: 'ptick-badge warn' }, '疑似卡住') : null,
@@ -834,44 +833,9 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ptick-badge' }, `${Math.round((interval / 60000) * 10) / 10} 分钟节奏`))))
     }
 
-    function StatusPage() {
-      const stream = useStatusStream()
-      const now = useNow(1000)
-      const [query, setQuery] = React.useState('')
-      const [filter, setFilter] = React.useState('all')
-      const [selectedId, setSelectedId] = React.useState('')
+    /** 催一次 / 静音的交互状态，状态页与「进度」标签页共用。 */
+    function useControls(flash) {
       const [busyId, setBusyId] = React.useState('')
-      const [toast, setToast] = React.useState('')
-      const toastTimer = React.useRef(0)
-
-      React.useEffect(() => () => clearTimeout(toastTimer.current), [])
-
-      const flash = (message) => {
-        setToast(message)
-        clearTimeout(toastTimer.current)
-        toastTimer.current = setTimeout(() => setToast(''), 2600)
-      }
-
-      const value = stream.value
-      const sessions = Array.isArray(value && value.sessions) ? value.sessions : []
-      const running = sessions.filter((item) => item.running)
-      const needle = query.trim().toLowerCase()
-
-      const filtered = sessions.filter((item) => {
-        if (needle) {
-          const haystack = `${item.title || ''} ${item.id || ''} ${item.cwd || ''}`.toLowerCase()
-          if (!haystack.includes(needle)) return false
-        }
-        if (filter === 'running') return item.running
-        if (filter === 'nudged') return (item.nudges || 0) > 0
-        if (filter === 'stuck') return Boolean(item.stuck)
-        if (filter === 'muted') return Boolean(item.muted)
-        if (filter === 'idle') return !item.running
-        return true
-      })
-      const ordered = filtered.slice().sort((a, b) => Number(b.running) - Number(a.running) || (b.elapsedMs || 0) - (a.elapsedMs || 0)).slice(0, 50)
-      const selected = sessions.find((item) => item.id === selectedId) || null
-
       const nudge = async (item) => {
         setBusyId(item.id)
         try {
@@ -894,6 +858,68 @@ window.__ModuleLoader__.load({
           setBusyId('')
         }
       }
+      return { busyId, nudge, mute }
+    }
+
+    function useToast() {
+      const [toast, setToast] = React.useState('')
+      const timer = React.useRef(0)
+      React.useEffect(() => () => clearTimeout(timer.current), [])
+      const flash = React.useCallback((message) => {
+        setToast(message)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setToast(''), 2600)
+      }, [])
+      return { toast, flash }
+    }
+
+    /** 会话视图里的「进度」标签页：当前会话的提醒记录 / 动作时间线 / 子 agent。 */
+    function ProgressView({ sessionId }) {
+      const stream = useStatusStream()
+      const now = useNow(1000)
+      const { toast, flash } = useToast()
+      const { busyId, nudge, mute } = useControls(flash)
+      const sessions = Array.isArray(stream.value && stream.value.sessions) ? stream.value.sessions : []
+      const item = sessions.find((entry) => entry.id === sessionId)
+      return h(React.Fragment, null,
+        item
+          ? h(SessionDetail, { item, now, busy: busyId === item.id, onNudge: nudge, onMute: mute })
+          : h('div', { className: 'ptick-detail' },
+            h('div', { className: 'ptick-empty' },
+              stream.phase === 'loading' && !stream.value
+                ? '正在读取…'
+                : stream.phase === 'error'
+                  ? `读取失败：${stream.message}`
+                  : '这个会话还没有进度数据。主 agent 开始执行后，这里会显示提醒记录、动作时间线和子 agent 树。')),
+        toast ? h('div', { className: 'ptick-toast', role: 'status' }, toast) : null)
+    }
+
+    function StatusPage({ openSession }) {
+      const stream = useStatusStream()
+      const now = useNow(1000)
+      const [query, setQuery] = React.useState('')
+      const [filter, setFilter] = React.useState('all')
+      const { toast, flash } = useToast()
+      const { busyId, nudge, mute } = useControls(flash)
+
+      const value = stream.value
+      const sessions = Array.isArray(value && value.sessions) ? value.sessions : []
+      const running = sessions.filter((item) => item.running)
+      const needle = query.trim().toLowerCase()
+
+      const filtered = sessions.filter((item) => {
+        if (needle) {
+          const haystack = `${item.title || ''} ${item.id || ''} ${item.cwd || ''}`.toLowerCase()
+          if (!haystack.includes(needle)) return false
+        }
+        if (filter === 'running') return item.running
+        if (filter === 'nudged') return (item.nudges || 0) > 0
+        if (filter === 'stuck') return Boolean(item.stuck)
+        if (filter === 'muted') return Boolean(item.muted)
+        if (filter === 'idle') return !item.running
+        return true
+      })
+      const ordered = filtered.slice().sort((a, b) => Number(b.running) - Number(a.running) || (b.elapsedMs || 0) - (a.elapsedMs || 0)).slice(0, 50)
 
       return h('div', { className: 'ptick-page' },
         h('div', { className: 'ptick-inner' },
@@ -902,7 +928,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ptick-page-title' }, '进度播报'),
               h('div', { className: 'ptick-page-sub' },
                 value
-                  ? `主 agent 连续执行且没有汇报时，每 ${value.intervalMinutes} 分钟收到一次提醒。点会话卡片可以看提醒记录、动作时间线、当前工具耗时和子 agent 树。`
+                  ? `主 agent 连续执行且没有汇报时，每 ${value.intervalMinutes} 分钟收到一次提醒。点会话卡片进入该会话，在「进度」标签页查看提醒记录、动作时间线、当前工具耗时和子 agent 树。`
                   : '主 agent 在连续执行且没有汇报时，会按设定间隔自动收到进度提醒。')),
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
               h('div', { className: 'ptick-pill' },
@@ -936,7 +962,7 @@ window.__ModuleLoader__.load({
               item,
               now,
               busy: busyId === item.id,
-              onOpen: (target) => setSelectedId(target.id),
+              onOpen: (target) => (typeof openSession === 'function' ? openSession(target.id) : null),
               onNudge: nudge,
               onMute: mute,
             }))),
@@ -945,20 +971,26 @@ window.__ModuleLoader__.load({
             h('span', null, value ? `dsh-progress-tick v${value.version} · ${stream.live ? 'SSE 推送' : '每 5 秒轮询'}` : ''),
             h('span', null, '仅主 agent 会被提醒；子 agent 只计入父会话的摘要'))),
 
-        selected ? h(SessionDrawer, {
-          item: selected,
-          now,
-          busy: busyId === selected.id,
-          onClose: () => setSelectedId(''),
-          onNudge: nudge,
-          onMute: mute,
-        }) : null,
         toast ? h('div', { className: 'ptick-toast', role: 'status' }, toast) : null)
     }
     //#endregion
 
     function apply(ctx) {
       ensureStyle()
+      // 会话导航服务：ctx.get 不受 inject 限制；服务缺失时降级为不可跳转。
+      let uiWorkspace = null
+      try {
+        uiWorkspace = ctx.get('uiWorkspace') || null
+      } catch (error) {
+        uiWorkspace = null
+      }
+      const openSession = (sessionId) => {
+        try {
+          if (uiWorkspace && typeof uiWorkspace.openSession === 'function') uiWorkspace.openSession(sessionId)
+        } catch (error) {
+          console.error('[progress-tick] openSession failed:', error)
+        }
+      }
       // 客户端 ctx 是代理：未在 inject 里声明的属性（如 slots）读取即抛
       // `cannot get property "slots" without inject`，会让整个 client entry 激活失败。
       try {
@@ -982,9 +1014,20 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('main', () => ctx.slots.register({
           name: 'main',
           key: 'progress-tick',
-        }, StatusPage))
+        }, () => h(StatusPage, { openSession })))
       } catch (error) {
         console.error('[progress-tick] sidebar page registration failed:', error)
+      }
+      // 会话视图里的「进度」标签页：紧挨着「对话」之后（chat order 0，轨迹 order 10）。
+      try {
+        ctx.slots.inject('conversation.view', () => ctx.slots.register({
+          name: 'conversation.view',
+          id: 'progress-tick',
+          order: 5,
+          label: () => '进度',
+        }, ProgressView))
+      } catch (error) {
+        console.error('[progress-tick] conversation view registration failed:', error)
       }
     }
 
