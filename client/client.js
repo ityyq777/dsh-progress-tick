@@ -202,14 +202,20 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      ctx.slots.inject('settings.section', () => ctx.slots.register({
-        name: 'settings.section',
-        id: 'progress-tick',
-        order: 60,
-        label: () => '进度播报',
-      }, () => h(Section, { ctx })))
+      // 客户端插件的 ctx 同样是代理：未在 inject 里声明的属性（如 slots）读取即抛
+      // `cannot get property "slots" without inject`，会让整个 client entry 激活失败。
+      try {
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: 'progress-tick',
+          order: 60,
+          label: () => '进度播报',
+        }, () => h(Section, { ctx })))
+      } catch (error) {
+        console.error('[progress-tick] settings section registration failed:', error)
+      }
     }
 
-    return { name: 'dsh-progress-tick', inject: [], apply }
+    return { name: 'dsh-progress-tick', inject: ['slots'], apply }
   }
 })

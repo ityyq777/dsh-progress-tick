@@ -452,7 +452,9 @@ export async function apply(ctx, initialConfig) {
   // cordis 的 ctx 是代理：未 inject 的属性（含 ctx.config）访问即抛
   // `cannot get property "config" without inject`。配置一律走 apply 的第二个参数。
   const baseConfig = initialConfig ?? {}
-  void writeBootMarker(liveConfig(baseConfig))
+  Promise.resolve()
+    .then(() => writeBootMarker(liveConfig(baseConfig)))
+    .catch((error) => ctxLog.warn?.(`boot marker failed: ${error?.message ?? error}`))
 
   ctx.on('agent/status', (payload) => {
     try {
@@ -512,7 +514,7 @@ export async function apply(ctx, initialConfig) {
         const config = liveConfig(baseConfig)
         if (config.enabled === false) return decision
         const state = getState(agent.session.id)
-        if (!state.writtenAt) void writeStatusFile(state, config)
+        if (!state.writtenAt) writeStatusFile(state, config).catch(() => {})
         if (state.done && !state.force) return decision
 
         const now = Date.now()
