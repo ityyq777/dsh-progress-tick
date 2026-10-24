@@ -25,7 +25,7 @@ const MIN_INTERVAL_MS = 10_000 // 10s
 const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.4.1'
+const VERSION = '0.4.2'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 8
 const MAX_BACKOFF_EXPONENT = 3 // 间隔最多放大 8×（factor 默认 2）
@@ -150,11 +150,33 @@ function clampText(text, max = MAX_NUDGE_CHARS) {
 
 const TARGET_KEYS = ['file_path', 'filePath', 'path', 'command', 'pattern', 'url', 'query', 'prompt', 'name', 'selector']
 
+/**
+ * `tool/call` 的 `arguments` 在真实会话里是 JSON 字符串（不是对象）。
+ * 不解析的话摘要会变成 `bash({"command":"…`，`lastKey` 也会被几 KB 的原始
+ * JSON 撑大，卡住检测还会因为参数里任何空白差异而失效。
+ */
+function parseActionArgs(args) {
+  if (args && typeof args === 'object') return args
+  if (typeof args !== 'string') return undefined
+  const text = args.trim()
+  if (!text) return undefined
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      return JSON.parse(text)
+    } catch {
+      // 非法 JSON：退回原文，至少还能看出调用了什么。
+      return text
+    }
+  }
+  return text
+}
+
 export function actionTarget(name, args) {
-  if (typeof args === 'string') return args
-  if (!args || typeof args !== 'object') return ''
+  const parsed = parseActionArgs(args)
+  if (typeof parsed === 'string') return parsed.trim()
+  if (!parsed || typeof parsed !== 'object') return ''
   for (const key of TARGET_KEYS) {
-    const value = args[key]
+    const value = parsed[key]
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return ''
@@ -314,13 +336,15 @@ function getState(sessionId) {
 }
 
 function noteAction(state, name, target) {
-  const key = `${name}:${target}`
+  // 事件流里 target 可能很长：落状态前统一压到 160 字，避免状态文件/内存被撑大。
+  const clean = trimTarget(target, 160)
+  const key = `${name}:${clean}`
   if (key && key === state.lastKey) state.repeat += 1
   else {
     state.repeat = 1
     state.lastKey = key
   }
-  state.actions.push({ name, target, failed: false, at: Date.now() })
+  state.actions.push({ name, target: clean, failed: false, at: Date.now() })
   if (state.actions.length > MAX_ACTIONS) state.actions.shift()
   state.updatedAt = Date.now()
 }
@@ -488,6 +512,10 @@ export function statusSnapshot(config) {
   for (const state of states.values()) {
     const interval = effectiveIntervalMs(base, state.nudges, config)
     const nextAt = state.anchor ? state.anchor + interval : 0
+    const max = Number(config.maxNudgesPerTurn ?? 0) || 0
+    // 已达本轮上限时倒计时不会再兑现，不能继续显示“待提醒 0:00”。
+    const capped = max > 0 && state.nudges >= max
+    const last = state.actions.length ? state.actions[state.actions.length - 1] : null
     sessions.push({
       id: state.sessionId,
       short: String(state.sessionId).replace(/^session-/, '').slice(0, 8),
@@ -495,13 +523,15 @@ export function statusSnapshot(config) {
       cwd: state.cwd ?? '',
       running: !state.done,
       nudges: state.nudges,
+      capped,
       intervalMs: interval,
       elapsedMs: state.turnStartedAt ? Math.max(0, now - state.turnStartedAt) : 0,
       sinceReportMs: state.anchor ? Math.max(0, now - state.anchor) : 0,
-      nextInMs: nextAt ? Math.max(0, nextAt - now) : 0,
-      overdue: Boolean(nextAt) && now >= nextAt && !state.done,
+      nextInMs: capped || !nextAt ? 0 : Math.max(0, nextAt - now),
+      overdue: !capped && Boolean(nextAt) && now >= nextAt && !state.done,
       stuck: state.repeat >= threshold,
-      lastAction: state.actions.length ? state.actions[state.actions.length - 1] : null,
+      // 只回展示需要的字段：完整 target 可能包含命令里的凭证，而且每 4 秒轮询一次。
+      lastAction: last ? { name: last.name, target: trimTarget(last.target, 80), failed: Boolean(last.failed), at: last.at } : null,
       lastNudgeAt: state.lastNudgeAt || 0,
       updatedAt: state.updatedAt || 0,
     })
@@ -683,9 +713,20 @@ export async function apply(ctx, initialConfig) {
 
       const state = getState(sessionId)
 
+      if (event.type === 'session/title') {
+        // 自动标题 / 用户重命名都会发这个事件，优先用它（比截首条消息准）。
+        const title = String(event.data?.title ?? '').replace(/\s+/g, ' ').trim()
+        if (title) state.title = title.length > 80 ? `${title.slice(0, 80)}…` : title
+        state.updatedAt = Date.now()
+        return
+      }
       if (event.type === 'user/message') {
         // 真实载荷：event.data 本身就是消息（含 content 数组），部分版本包在 data.message 里。
         const message = event.data?.message ?? event.data
+        const sourceKind = message?.source?.kind
+        // 只认真人消息：本插件自己注入的提醒（source.kind = progress-tick）、
+        // goal / 系统消息都不该影响语言判定和标题。
+        if (sourceKind !== 'user') return
         state.locale = pickLocale(JSON.stringify(message ?? ''), config)
         if (!state.title) {
           const text = messageText(message).replace(/\s+/g, ' ').trim()
@@ -700,7 +741,8 @@ export async function apply(ctx, initialConfig) {
       }
       if (event.type === 'tool/result') {
         const data = event.data ?? {}
-        if (data.error) markFailed(state)
+        // 失败结果有两种形状：显式 error，或 message.isError = true（常见）。
+        if (data.error || data.message?.isError === true) markFailed(state)
         return
       }
       if (event.type === 'turn/end') {
@@ -714,7 +756,7 @@ export async function apply(ctx, initialConfig) {
   // /progress：用户随时让主 agent 立刻汇报一次（不依赖计时）。
   try {
     const commands = typeof ctx.get === 'function' ? ctx.get('commands') : undefined
-    if (commands?.register) {
+    if (commands?.register && liveConfig(baseConfig).commandEnabled !== false) {
       commands.register({
         name: 'progress',
         description: '让主 agent 立刻汇报当前进度',

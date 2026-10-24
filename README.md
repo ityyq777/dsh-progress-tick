@@ -106,7 +106,9 @@ queued and injected before the next request).
 With `statusFile` enabled, each session writes
 `~/.dsh/progress-tick/status/<sessionId>.json` with the current anchor, nudge
 count, pending characters, recent actions, and subagent bookkeeping — useful for
-external dashboards or debugging.
+external dashboards or debugging. Action targets are parsed out of the tool
+arguments and truncated to 160 characters, so the full parameter payload (which
+may contain credentials) is never written to disk.
 
 ## Install
 

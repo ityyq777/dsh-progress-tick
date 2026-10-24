@@ -525,13 +525,14 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ptick-card2-where' }, where)),
         h('div', { className: 'ptick-card2-meta' },
           h('span', null, '已运行 ', h('b', null, item.running ? formatDuration(item.elapsedMs) : '已结束')),
-          h('span', null, item.running ? '下次提醒 ' : '最后提醒 ', h('b', null, item.running ? formatCountdown(item.nextInMs) : item.nudges > 0 ? '—' : '未触发')),
+          h('span', null, item.running ? (item.capped ? '提醒上限 ' : '下次提醒 ') : '最后提醒 ', h('b', null, item.running ? (item.capped ? '已用完' : formatCountdown(item.nextInMs)) : item.nudges > 0 ? '—' : '未触发')),
           h('span', null, '本轮提醒 ', h('b', null, String(item.nudges || 0)))),
         item.running ? h('div', { className: 'ptick-bar' }, h('div', { className: 'ptick-bar-fill', style: { width: `${Math.round(ratio * 100)}%` } })) : null,
         h('div', { className: 'ptick-card2-foot' },
           h('span', null, action ? `最近动作 · ${action}` : '还没有工具动作'),
           h('div', { style: { display: 'flex', gap: 6 } },
             item.stuck ? h('span', { className: 'ptick-badge warn' }, '疑似卡住') : null,
+            item.capped ? h('span', { className: 'ptick-badge' }, '本轮已提醒满额') : null,
             item.overdue ? h('span', { className: 'ptick-badge warn' }, '待提醒') : null,
             h('span', { className: 'ptick-badge' }, `${Math.round(interval / 60000 * 10) / 10} 分钟节奏`))))
     }

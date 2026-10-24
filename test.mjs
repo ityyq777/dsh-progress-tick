@@ -105,6 +105,17 @@ ok('actionTarget', () => {
   assert.equal(actionTarget('grep', { pattern: 'foo' }), 'foo')
   assert.equal(actionTarget('read', {}), '')
 })
+ok('actionTarget 解析 JSON 字符串参数', () => {
+  // 真实会话里 tool/call 的 arguments 是 JSON 字符串，不是对象。
+  assert.equal(actionTarget('bash', '{"command":"npm test"}'), 'npm test')
+  assert.equal(actionTarget('bash', '{"command":"cd /a && ls","description":"列目录"}'), 'cd /a && ls')
+  assert.equal(actionTarget('write', '{"file_path":"/a/b.ts","content":"x"}'), '/a/b.ts')
+  assert.equal(actionTarget('bash', '  {"command":"npm run build"}  '), 'npm run build')
+  // 非法 JSON 退回原文，至少能看出调用了什么
+  assert.equal(actionTarget('bash', 'not-json'), 'not-json')
+  assert.equal(actionTarget('bash', ''), '')
+  assert.equal(actionTarget('bash', undefined), '')
+})
 ok('trimTarget', () => {
   assert.equal(trimTarget('a\nb   c'), 'a b c')
   assert.ok(trimTarget('x'.repeat(80)).endsWith('…'))
@@ -300,6 +311,111 @@ ok('模块无 default export，且命名空间带 apply + Config', () => {
     // 清掉本用例留下的会话状态，后面「状态页空快照」的断言才成立
     handlers.get('dispose')?.()
   }
+}
+
+// ---- 回归（P0）：tool 参数是 JSON 字符串、isError 失败、标题来源
+{
+  const handlers = new Map()
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handlers.set(name, fn) }
+      if (prop === 'get') return () => undefined
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const config = { statusFile: false, intervalMinutes: 5 }
+  await moduleNamespace.apply(fakeCtx, config)
+  try {
+    const session = { id: 'session-p0', header: { cwd: '/tmp/demo' } }
+    const bigArgs = JSON.stringify({
+      command: 'curl -H "Authorization: Bearer SECRET" https://example.test',
+      description: 'x'.repeat(800),
+    })
+    handlers.get('session/event')(session, { type: 'tool/call', data: { name: 'bash', arguments: bigArgs } })
+    handlers.get('session/event')(session, { type: 'tool/result', data: { message: { isError: true } } })
+
+    const row = () => statusSnapshot(config).sessions.find((item) => item.id === 'session-p0')
+    assert.equal(row().lastAction.name, 'bash')
+    assert.ok(row().lastAction.target.startsWith('curl -H'), '应取解析后的 command，而不是原始 JSON')
+    assert.ok(!row().lastAction.target.includes('"command"'), '不应把原始 JSON 当摘要')
+    assert.ok(row().lastAction.target.length <= 81, 'lastAction.target 应被截断')
+    assert.equal(row().lastAction.failed, true, 'message.isError 应计为失败')
+
+    // 本插件注入的提醒也是 user/message，但不能影响语言判定或标题
+    handlers.get('session/event')(session, {
+      type: 'user/message',
+      data: { role: 'user', source: { kind: 'progress-tick' }, content: [{ type: 'text', text: '【进度播报】请汇报' }] },
+    })
+    assert.equal(row().title, '', '插件自己的提醒不应被当成用户消息')
+    passed += 1
+
+    // 自动标题 / 用户重命名都走 session/title
+    handlers.get('session/event')(session, { type: 'session/title', data: { title: '真实会话标题' } })
+    assert.equal(row().title, '真实会话标题')
+    passed += 1
+  } finally {
+    handlers.get('dispose')?.()
+  }
+}
+
+// ---- 回归（P0）：达到 maxNudgesPerTurn 后不再注入，快照也不显示倒计时
+{
+  const handlers = new Map()
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handlers.set(name, fn) }
+      if (prop === 'get') return () => undefined
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const config = { statusFile: false, intervalMinutes: 0.17, maxNudgesPerTurn: 1, backoffAfter: 99, detailEvery: 1 }
+  await moduleNamespace.apply(fakeCtx, config)
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    const agent = { session: { id: 'session-cap', header: {} } }
+    handlers.get('agent/status')({ agent, status: 'running' })
+    clock += 11_000
+    const first = { kind: 'enter', messages: [] }
+    await handlers.get('agent/pre-step')({ agent }, async () => first)
+    assert.equal(first.messages.length, 1, '第一次超时应提醒')
+
+    clock += 11_000
+    const second = { kind: 'enter', messages: [] }
+    await handlers.get('agent/pre-step')({ agent }, async () => second)
+    assert.equal(second.messages.length, 0, '达到本轮上限后不再注入')
+
+    const row = statusSnapshot(config).sessions.find((item) => item.id === 'session-cap')
+    assert.equal(row.capped, true, '快照应标记 capped')
+    assert.equal(row.nextInMs, 0, 'capped 时不应再给倒计时')
+    assert.equal(row.overdue, false, 'capped 时不应显示待提醒')
+    passed += 1
+  } finally {
+    Date.now = realNow
+    handlers.get('dispose')?.()
+  }
+}
+
+// ---- 回归（P0）：commandEnabled=false 时不注册 /progress
+{
+  let registered = 0
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return () => {}
+      if (prop === 'get') return (name) => (name === 'commands' ? { register: () => { registered += 1 } } : undefined)
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  await moduleNamespace.apply(fakeCtx, { statusFile: false, commandEnabled: false })
+  assert.equal(registered, 0, 'commandEnabled=false 不应注册命令')
+  passed += 1
 }
 
 console.log(`✓ ${passed} 项断言通过`)
