@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-progress-tick-style'
     // 样式表随版本换代：旧版本注入的 <style> 仍在页面里时按 rev 替换，
     // 否则新加的类名没有规则，控件会退回浏览器默认样式（0.5.0 升级时踩过）。
-    const STYLE_REV = '0.5.1'
+    const STYLE_REV = '0.5.5'
 
     function ensureStyle() {
       if (typeof document === 'undefined') return
@@ -84,29 +84,46 @@ window.__ModuleLoader__.load({
     .ptick-mini{height:26px;padding:0 10px;font-size:12px;border-radius:7px;border:1px solid var(--ptick-line);background:transparent;color:inherit;cursor:pointer;white-space:nowrap}
     .ptick-mini:disabled{opacity:.45;cursor:default}
     .ptick-mini.is-primary{color:#fff;background:var(--ptick-accent);border-color:transparent}
-    .ptick-detail{width:100%;max-width:1040px;margin:0 auto;box-sizing:border-box;padding:20px 28px 48px;display:flex;flex-direction:column;gap:16px}
-    .ptick-detail-actions{display:flex;justify-content:flex-end;gap:8px}
-    .ptick-detail-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:10px}
-    .ptick-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
-    .ptick-meta span{font-size:11px;opacity:.55}
-    .ptick-meta b{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .ptick-now{display:flex;flex-direction:column;gap:3px;border:1px solid color-mix(in oklab,var(--ptick-accent) 35%,transparent);background:color-mix(in oklab,var(--ptick-accent) 8%,transparent);border-radius:10px;padding:10px 12px;font-size:12.5px}
-    .ptick-now code{font-family:var(--dsw-font-family,monospace);font-size:11px;opacity:.75;word-break:break-all}
-    .ptick-actions{display:flex;gap:8px;flex-wrap:wrap}
-    .ptick-sec h4{margin:0 0 8px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;opacity:.5;font-weight:600}
-    .ptick-sec-empty{font-size:12px;opacity:.5}
-    .ptick-log,.ptick-tl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-    .ptick-log li{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap}
-    .ptick-tl li{display:flex;align-items:center;gap:8px;font-size:12px;min-width:0}
-    .ptick-tl-time{font-variant-numeric:tabular-nums;opacity:.6;font-size:11.5px;white-space:nowrap}
-    .ptick-log-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.65}
-    .ptick-reports{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-    .ptick-reports li{border-left:2px solid var(--ptick-line);padding-left:10px;display:flex;flex-direction:column;gap:3px}
+    .ptick-detail{--ptick-line:color-mix(in oklab,currentColor 14%,transparent);width:100%;min-height:100%;box-sizing:border-box;overflow:auto;padding:26px 30px 64px;display:flex;flex-direction:column;gap:20px;font-size:13px;background:color-mix(in oklab,var(--dsw-alias-bg-layer-2,#ffffff) 92%,transparent);-webkit-backdrop-filter:blur(20px) saturate(1.1);backdrop-filter:blur(20px) saturate(1.1)}
+    .ptick-detail-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .ptick-detail-live{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;opacity:.8}
+    .ptick-detail-live b{font-weight:650;font-variant-numeric:tabular-nums}
+    .ptick-detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+    .ptick-btn{height:30px;padding:0 14px;border-radius:9px;border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 3%,transparent);color:inherit;font:inherit;font-size:12.5px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;transition:background .15s ease,border-color .15s ease,transform .1s ease}
+    .ptick-btn:hover:not(:disabled){background:color-mix(in oklab,currentColor 9%,transparent);border-color:color-mix(in oklab,currentColor 24%,transparent)}
+    .ptick-btn:active:not(:disabled){transform:translateY(1px)}
+    .ptick-btn:disabled{opacity:.5;cursor:default}
+    .ptick-btn-primary{background:var(--ptick-accent);border-color:transparent;color:#fff;font-weight:600}
+    .ptick-btn-primary:hover:not(:disabled){background:var(--ptick-accent);filter:brightness(1.06)}
+    .ptick-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+    .ptick-metric{border:1px solid var(--ptick-line);border-radius:12px;padding:11px 13px;display:flex;flex-direction:column;gap:3px;background:color-mix(in oklab,currentColor 3.5%,transparent)}
+    .ptick-metric-label{font-size:11px;letter-spacing:.03em;opacity:.55}
+    .ptick-metric-value{font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .ptick-metric-value.is-accent{color:var(--ptick-accent)}
+    .ptick-metric-note{font-size:11px;opacity:.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .ptick-card{border:1px solid var(--ptick-line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;background:color-mix(in oklab,currentColor 3%,transparent)}
+    .ptick-card-head{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
+    .ptick-card-title{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:650;letter-spacing:.02em;opacity:.9}
+    .ptick-card-hint{font-size:11.5px;opacity:.5;font-variant-numeric:tabular-nums}
+    .ptick-now{border:1px solid color-mix(in oklab,var(--ptick-accent) 30%,transparent);background:color-mix(in oklab,var(--ptick-accent) 7%,transparent);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:7px}
+    .ptick-now-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;flex-wrap:wrap}
+    .ptick-now-head code{font-family:var(--dsw-font-family,monospace);font-size:11.5px;padding:1px 7px;border-radius:6px;background:color-mix(in oklab,currentColor 9%,transparent);font-weight:600}
+    .ptick-now-args{font-family:var(--dsw-font-family,monospace);font-size:11.5px;line-height:1.65;opacity:.72;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .ptick-sec{display:flex;flex-direction:column;gap:8px}
+    .ptick-sec-empty{border:1px dashed var(--ptick-line);border-radius:10px;padding:16px;text-align:center;font-size:12px;opacity:.55}
+    .ptick-log,.ptick-tl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+    .ptick-log li{display:flex;align-items:flex-start;gap:9px;font-size:12px;padding:8px 10px;border-radius:9px;transition:background .15s ease}
+    .ptick-log li:hover{background:color-mix(in oklab,currentColor 5%,transparent)}
+    .ptick-log li + li{box-shadow:inset 0 1px 0 color-mix(in oklab,currentColor 8%,transparent)}
+    .ptick-tl-time,.ptick-log-time{font-variant-numeric:tabular-nums;opacity:.6;font-size:11.5px;white-space:nowrap;padding-top:2px}
+    .ptick-log-text{flex:1;min-width:0;line-height:1.6;opacity:.78;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .ptick-log-elapsed{font-size:11px;opacity:.45;white-space:nowrap;padding-top:2px}
+    .ptick-reports{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+    .ptick-reports li{border-left:2px solid color-mix(in oklab,var(--ptick-accent) 45%,transparent);padding:2px 0 2px 12px;display:flex;flex-direction:column;gap:4px}
     .ptick-report-time{font-variant-numeric:tabular-nums;opacity:.5;font-size:11px}
-    .ptick-report-text{font-size:12.5px;line-height:1.65;white-space:pre-wrap;opacity:.85;max-height:9em;overflow:auto}
-    .ptick-log-elapsed{font-size:11.5px;opacity:.55;white-space:nowrap}
+    .ptick-report-text{font-size:12.5px;line-height:1.7;white-space:pre-wrap;opacity:.85;max-height:10em;overflow:auto}
     .ptick-badge.ok{color:var(--ptick-accent);border-color:color-mix(in oklab,var(--ptick-accent) 45%,transparent)}
-    .ptick-sub{border-left:2px solid var(--ptick-line);padding:4px 0 4px 10px;display:flex;flex-direction:column;gap:3px}
+    .ptick-sub{border:1px solid var(--ptick-line);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:4px;background:color-mix(in oklab,currentColor 2%,transparent)}
     .ptick-sub-line{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap}
     .ptick-sub-title{font-weight:600}
     .ptick-sub-meta{opacity:.55;font-size:11.5px}
@@ -766,10 +783,11 @@ window.__ModuleLoader__.load({
       h('path', { d: 'M2.2 8a5.8 5.8 0 0 1 1.6-4' }))
     }
 
-    function Meta({ label, value }) {
-      return h('div', { className: 'ptick-meta' },
-        h('span', null, label),
-        h('b', { title: typeof value === 'string' ? value : undefined }, value))
+    function Meta({ label, value, note, accent, title }) {
+      return h('div', { className: 'ptick-metric' },
+        h('span', { className: 'ptick-metric-label' }, label),
+        h('b', { className: accent ? 'ptick-metric-value is-accent' : 'ptick-metric-value', title: title || (typeof value === 'string' ? value : undefined) }, value),
+        note ? h('span', { className: 'ptick-metric-note' }, note) : null)
     }
 
     function SubagentNode({ node, depth }) {
@@ -787,60 +805,87 @@ window.__ModuleLoader__.load({
         (node.children || []).map((child) => h(SubagentNode, { key: child.id, node: child, depth: depth + 1 })))
     }
 
+    const REASON_BADGE = { manual: 'ptick-badge ok', stuck: 'ptick-badge warn' }
+
     /** 单会话进度详情：会话视图「进度」标签页的正文（不再用浮层）。 */
     function SessionDetail({ item, now, busy, onNudge, onMute }) {
       const tool = item.currentTool
       const logs = Array.isArray(item.nudgeLog) ? item.nudgeLog.slice().reverse() : []
       const reports = Array.isArray(item.reports) ? item.reports : []
       const subagents = Array.isArray(item.subagents) ? item.subagents : []
+      const intervalMinutes = Math.round(((item.intervalMs || 0) / 60000) * 10) / 10
+      const caps = Math.max(0, Number(item.caps) || 0)
       return h('div', { className: 'ptick-detail' },
-        h('div', { className: 'ptick-detail-actions' },
-          h('button', {
-            className: 'ptick-btn ptick-btn-primary',
-            disabled: !item.running || busy,
-            onClick: () => onNudge(item),
-          }, busy ? '发送中…' : '立即催一次'),
-          h('button', {
-            className: 'ptick-btn',
-            disabled: busy,
-            onClick: () => onMute(item),
-          }, item.muted ? '取消静音' : '本会话静音')),
+        h('div', { className: 'ptick-detail-bar' },
+          h('div', { className: 'ptick-detail-live' },
+            h('i', { className: item.running ? 'ptick-dot is-live' : 'ptick-dot' }),
+            item.running
+              ? h('span', null, '运行中 · 已运行 ', h('b', null, formatDuration(item.elapsedMs)), ' · 会话 ', h('b', null, item.short))
+              : h('span', null, '任务已结束 · 会话 ', h('b', null, item.short)),
+            item.muted ? h('span', { className: 'ptick-badge' }, '已静音') : null,
+            item.stuck && item.running ? h('span', { className: 'ptick-badge warn' }, '疑似卡住') : null),
+          h('div', { className: 'ptick-detail-actions' },
+            h('button', {
+              className: 'ptick-btn ptick-btn-primary',
+              disabled: !item.running || busy,
+              onClick: () => onNudge(item),
+            }, busy ? '发送中…' : '立即催一次'),
+            h('button', {
+              className: 'ptick-btn',
+              disabled: busy,
+              onClick: () => onMute(item),
+            }, item.muted ? '取消静音' : '本会话静音'))),
 
-        h('div', { className: 'ptick-detail-meta' },
-          h(Meta, { label: '状态', value: item.running ? '运行中' : '已结束' }),
-          h(Meta, { label: '已运行', value: item.running ? formatDuration(item.elapsedMs) : '—' }),
-          h(Meta, { label: '本轮提醒', value: `${item.nudges || 0} 次` }),
-          h(Meta, { label: item.capped ? '提醒上限' : '下次提醒', value: item.capped ? '已用完' : item.running ? formatCountdown(item.nextInMs) : '—' }),
-          h(Meta, { label: '最近汇报', value: item.sinceReportMs ? `${formatDuration(item.sinceReportMs)} 前` : '—' }),
-          h(Meta, { label: '节奏', value: `${Math.round(((item.intervalMs || 0) / 60000) * 10) / 10} 分钟` })),
+        h('div', { className: 'ptick-metrics' },
+          h(Meta, { label: '本轮提醒', value: `${item.nudges || 0} 次`, note: caps ? `上限 ${caps} 次` : '不限次数' }),
+          h(Meta, {
+            label: item.capped ? '提醒上限' : '下次提醒',
+            value: item.capped ? '已用完' : item.running ? formatCountdown(item.nextInMs) : '—',
+            accent: item.running && !item.capped,
+            note: item.capped ? '等下一轮' : item.running ? `每 ${intervalMinutes} 分钟` : '',
+          }),
+          h(Meta, {
+            label: '最近汇报',
+            value: item.sinceReportMs ? `${formatDuration(item.sinceReportMs)} 前` : '—',
+            note: item.running ? '距上次汇报' : '',
+          }),
+          h(Meta, { label: '节奏', value: `${intervalMinutes} 分钟`, note: '连续执行后提醒' })),
 
         tool
           ? h('div', { className: 'ptick-now' },
-            h('span', null, '当前工具 · ', h('b', null, `${tool.name} · ${formatDuration(Math.max(0, now - tool.at))}`)),
-            tool.target ? h('code', null, tool.target) : null)
+            h('div', { className: 'ptick-now-head' },
+              h('span', null, '当前工具'),
+              h('code', null, tool.name),
+              h('span', { className: 'ptick-card-hint' }, formatDuration(Math.max(0, now - tool.at)))),
+            tool.target ? h('div', { className: 'ptick-now-args' }, tool.target) : null)
           : h('div', { className: 'ptick-sec-empty' }, item.running ? '当前没有正在执行的工具' : '任务已结束'),
 
-        h('section', { className: 'ptick-sec' },
-          h('h4', null, '提醒记录'),
+        h('section', { className: 'ptick-card' },
+          h('div', { className: 'ptick-card-head' },
+            h('div', { className: 'ptick-card-title' }, '提醒记录'),
+            h('div', { className: 'ptick-card-hint' }, logs.length ? `最近 ${logs.length} 条` : '本轮 0 条')),
           logs.length === 0
             ? h('div', { className: 'ptick-sec-empty' }, '本轮还没有提醒')
             : h('ul', { className: 'ptick-log' }, logs.map((entry, index) => h('li', { key: `${entry.at}-${index}` },
-              h('span', { className: 'ptick-tl-time' }, clockText(entry.at)),
-              h('span', { className: entry.reason === 'manual' ? 'ptick-badge ok' : entry.reason === 'stuck' ? 'ptick-badge warn' : 'ptick-badge' },
-                REASON_LABEL[entry.reason] || entry.reason || '提醒'),
-              h('span', { className: 'ptick-log-elapsed' }, `已运行 ${formatDuration(entry.elapsedMs)}`),
+              h('span', { className: 'ptick-log-time' }, clockText(entry.at)),
+              h('span', { className: REASON_BADGE[entry.reason] || 'ptick-badge' }, REASON_LABEL[entry.reason] || entry.reason || '提醒'),
+              h('span', { className: 'ptick-log-elapsed' }, formatDuration(entry.elapsedMs)),
               h('span', { className: 'ptick-log-text', title: entry.text }, entry.text || ''))))),
 
-        h('section', { className: 'ptick-sec' },
-          h('h4', null, `最近汇报${reports.length ? ` · ${reports.length}` : ''}`),
+        h('section', { className: 'ptick-card' },
+          h('div', { className: 'ptick-card-head' },
+            h('div', { className: 'ptick-card-title' }, '最近汇报'),
+            h('div', { className: 'ptick-card-hint' }, reports.length ? `${reports.length} 条正文` : '本轮 0 条')),
           reports.length === 0
             ? h('div', { className: 'ptick-sec-empty' }, '本轮还没有 agent 汇报正文')
             : h('ul', { className: 'ptick-reports' }, reports.map((entry, index) => h('li', { key: `${entry.at}-${index}` },
               h('div', { className: 'ptick-report-time' }, clockText(entry.at)),
               h('div', { className: 'ptick-report-text' }, entry.text))))),
 
-        h('section', { className: 'ptick-sec' },
-          h('h4', null, `子 agent${subagents.length ? ` · ${subagents.length}` : ''}`),
+        h('section', { className: 'ptick-card' },
+          h('div', { className: 'ptick-card-head' },
+            h('div', { className: 'ptick-card-title' }, '子 agent'),
+            h('div', { className: 'ptick-card-hint' }, subagents.length ? `${subagents.length} 个` : '无')),
           subagents.length === 0
             ? h('div', { className: 'ptick-sec-empty' }, '没有子 agent')
             : subagents.map((node) => h(SubagentNode, { key: node.id, node, depth: 0 }))))
