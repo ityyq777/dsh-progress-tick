@@ -600,80 +600,149 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 快照流：优先 SSE（`api/progress-tick/events`），首帧到之前以及断线期间用 5s 轮询兜底。
-     * 两者读到的是同一份 `statusSnapshot()`，所以切换时不会跳变。
+     * 快照流：同一页面只维持一条 SSE + 一套轮询。
+     *
+     * 曾经每个视图各开一条 EventSource，而浏览器对同一 host 只有 6 个连接：
+     * 多开几个标签页 / 视图后连接池被占满，`fetch(status)` 就会一直排队，
+     * 界面表现为永远停在“正在读取…”。现在改成模块级单例 + 8 秒请求超时。
      */
-    function useStatusStream() {
-      const [state, setState] = React.useState({ phase: 'loading', value: null, live: false, message: '' })
-      React.useEffect(() => {
-        let alive = true
-        let source = null
-        let polling = 0
-        let sawStream = false
+    const streamStore = {
+      started: false,
+      refs: 0,
+      value: null,
+      phase: 'loading',
+      live: false,
+      message: '',
+      sawStream: false,
+      listeners: new Set(),
+      source: null,
+      polling: 0,
+    }
 
-        const apply = (value, live) => {
-          if (!alive || !value) return
-          setState({ phase: 'ready', value, live: Boolean(live), message: '' })
+    function streamPatch(patch) {
+      Object.assign(streamStore, patch)
+      const snapshot = {
+        phase: streamStore.phase,
+        value: streamStore.value,
+        live: streamStore.live,
+        message: streamStore.message,
+      }
+      for (const listener of streamStore.listeners) {
+        try {
+          listener(snapshot)
+        } catch (error) {
+          // 单个视图渲染出错不影响其它视图。
         }
-        const fail = (message) => {
-          if (!alive) return
-          setState((prev) => ({ phase: prev.value ? 'ready' : 'error', value: prev.value, live: prev.live, message }))
+      }
+    }
+
+    async function streamFetchOnce() {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null
+      const timer = controller ? setTimeout(() => { try { controller.abort() } catch (error) {} }, 8000) : 0
+      try {
+        const response = await fetch('api/progress-tick/status', {
+          headers: { accept: 'application/json' },
+          signal: controller ? controller.signal : undefined,
+        })
+        const payload = await response.json().catch(() => null)
+        if (response.ok && payload && payload.ok) {
+          streamPatch({ phase: 'ready', value: payload.value, live: streamStore.sawStream, message: '' })
+          return
         }
-        const pollOnce = async () => {
-          try {
-            const response = await fetch('api/progress-tick/status', { headers: { accept: 'application/json' } })
-            const payload = await response.json().catch(() => null)
-            if (!alive) return
-            if (!response.ok || !payload || !payload.ok) {
-              fail((payload && payload.error) || `HTTP ${response.status}`)
-              return
+        if (!streamStore.value) {
+          streamPatch({ phase: 'error', message: (payload && payload.error) || `HTTP ${response.status}` })
+        }
+      } catch (error) {
+        if (streamStore.value) return
+        const timeout = error && error.name === 'AbortError'
+        streamPatch({
+          phase: 'error',
+          message: timeout ? '请求超时（8 秒）：连接池可能被其它标签页占满，点「重试」' : String((error && error.message) || error),
+        })
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
+    }
+
+    function streamStart() {
+      if (streamStore.started) return
+      streamStore.started = true
+      void streamFetchOnce()
+      if (streamStore.polling) clearInterval(streamStore.polling)
+      // 推送正常时不必每 5s 再拉一次全量快照；断线期间自动接管。
+      streamStore.polling = setInterval(() => {
+        if (!streamStore.sawStream) void streamFetchOnce()
+      }, 5000)
+      if (typeof window !== 'undefined' && typeof window.EventSource === 'function') {
+        try {
+          const source = new window.EventSource('api/progress-tick/events')
+          streamStore.source = source
+          source.addEventListener('snapshot', (event) => {
+            try {
+              const value = JSON.parse(event.data)
+              streamStore.sawStream = true
+              streamPatch({ phase: 'ready', value, live: true, message: '' })
+            } catch (error) {
+              // 帧格式异常：忽略这一帧，轮询仍在兜底。
             }
-            apply(payload.value, sawStream)
-          } catch (error) {
-            fail(String((error && error.message) || error))
-          }
+          })
+          source.addEventListener('error', () => {
+            // EventSource 自带重连；断开期间由轮询接管。
+            streamStore.sawStream = false
+            streamPatch({ live: false })
+          })
+        } catch (error) {
+          // 浏览器禁用 EventSource：只走轮询。
         }
-        const startPolling = () => {
-          if (polling) return
-          polling = setInterval(() => { void pollOnce() }, 5000)
-        }
-        const stopPolling = () => {
-          if (!polling) return
-          clearInterval(polling)
-          polling = 0
-        }
+      }
+    }
 
-        void pollOnce()
-        startPolling()
-
-        if (typeof window !== 'undefined' && typeof window.EventSource === 'function') {
-          try {
-            source = new window.EventSource('api/progress-tick/events')
-            source.addEventListener('snapshot', (event) => {
-              try {
-                const value = JSON.parse(event.data)
-                sawStream = true
-                stopPolling() // 推送正常时不需要轮询，省掉每 5s 一次的全量快照
-                apply(value, true)
-              } catch (error) {
-                // 帧格式异常：忽略这一帧，轮询仍在兜底。
-              }
-            })
-            source.addEventListener('error', () => {
-              // EventSource 自带重连；断开期间恢复轮询，直到下一帧推送到达。
-              sawStream = false
-              startPolling()
-              setState((prev) => (prev.live ? { ...prev, live: false } : prev))
-            })
-          } catch (error) {
-            // 浏览器禁用 EventSource：只走轮询。
-          }
+    function streamStop() {
+      streamStore.started = false
+      streamStore.sawStream = false
+      if (streamStore.source) {
+        try {
+          streamStore.source.close()
+        } catch (error) {
+          // 已经关掉就忽略。
         }
+        streamStore.source = null
+      }
+      if (streamStore.polling) {
+        clearInterval(streamStore.polling)
+        streamStore.polling = 0
+      }
+    }
 
+    /** 界面上的「重试」：关掉旧连接后重新建一条流。 */
+    function retryStatusStream() {
+      streamStop()
+      streamPatch({ phase: streamStore.value ? 'ready' : 'loading', message: '' })
+      streamStart()
+    }
+
+    function useStatusStream() {
+      const [state, setState] = React.useState({
+        phase: streamStore.phase,
+        value: streamStore.value,
+        live: streamStore.live,
+        message: streamStore.message,
+      })
+      React.useEffect(() => {
+        streamStore.refs += 1
+        streamStart()
+        const listener = (next) => setState(next)
+        streamStore.listeners.add(listener)
+        listener({
+          phase: streamStore.phase,
+          value: streamStore.value,
+          live: streamStore.live,
+          message: streamStore.message,
+        })
         return () => {
-          alive = false
-          if (source) source.close()
-          stopPolling()
+          streamStore.listeners.delete(listener)
+          streamStore.refs -= 1
+          if (streamStore.refs <= 0) streamStop()
         }
       }, [])
       return state
@@ -883,7 +952,9 @@ window.__ModuleLoader__.load({
               stream.phase === 'loading' && !stream.value
                 ? '正在读取…'
                 : stream.phase === 'error'
-                  ? `读取失败：${stream.message}`
+                  ? h(React.Fragment, null,
+                    h('div', null, `读取失败：${stream.message}`),
+                    h('button', { className: 'ptick-btn', style: { marginTop: 10 }, onClick: retryStatusStream }, '重试'))
                   : '这个会话还没有进度数据。主 agent 开始执行后，这里会显示提醒记录、最近几次汇报正文和子 agent 树。')),
         toast ? h('div', { className: 'ptick-toast', role: 'status' }, toast) : null)
     }
