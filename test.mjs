@@ -487,7 +487,7 @@ ok('statusSnapshot 空注册表结构', () => {
   assert.equal(snap.intervalMinutes, 5)
 })
 
-// ---- 最近汇报正文：按 reportHistoryCount 截断并保持最新在前
+// ---- 最近汇报正文：只收“被提醒之后”的那条汇报，并按 reportHistoryCount 截断
 {
   const handled = new Map()
   const fakeCtx2 = new Proxy({}, {
@@ -499,22 +499,48 @@ ok('statusSnapshot 空注册表结构', () => {
       throw new Error(`cannot get property "${String(prop)}" without inject`)
     },
   })
-  const cfg = { statusFile: false, intervalMinutes: 5, reportHistoryCount: 2 }
+  const cfg = { statusFile: false, intervalMinutes: 0.17, reportHistoryCount: 2, backoffAfter: 99 }
   await moduleNamespace.apply(fakeCtx2, cfg)
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
   try {
-    const session = { id: 'session-reports', header: { cwd: '/tmp/demo' } }
-    for (const text of ['第一条汇报', '第二条汇报', '第三条汇报']) {
+    const agent = { session: { id: 'session-reports', header: { cwd: '/tmp/demo' } } }
+    const session = agent.session
+    handled.get('agent/status')({ agent, status: 'running' })
+
+    // 没有提醒时，普通回复不进「最近汇报」
+    handled.get('session/event')(session, {
+      type: 'assistant/message',
+      data: { message: { role: 'assistant', content: [{ type: 'text', text: '普通回复，不算汇报' }] } },
+    })
+    assert.equal(statusSnapshot(cfg).sessions[0].reports.length, 0, '未提醒时的回复不应记录')
+
+    const nudges = ['第一条汇报', '第二条汇报', '第三条汇报']
+    for (const text of nudges) {
+      clock += 11_000
+      const decision = { kind: 'enter', messages: [] }
+      await handled.get('agent/pre-step')({ agent }, async () => decision)
+      assert.equal(decision.messages.length, 1, '超时应注入提醒')
       handled.get('session/event')(session, {
         type: 'assistant/message',
-        data: { message: { role: 'assistant', content: [{ type: 'text', text }] } },
+        data: {
+          message: {
+            role: 'assistant',
+            // 真实消息里 thinking 块和正文块混在一起，汇报只应取正文。
+            content: [{ type: 'thinking', text: '内部独白，不该进汇报' }, { type: 'text', text }],
+          },
+        },
       })
     }
     const row = statusSnapshot(cfg).sessions.find((item) => item.id === 'session-reports')
-    ok('最近汇报正文按配置条数保留', () => {
+    ok('最近汇报只收提醒后的正文且按配置条数截断', () => {
       assert.equal(row.reports.length, 2, '按 reportHistoryCount 截断')
-      assert.equal(row.reports[0].text, '第三条汇报', '最新的在前')
+      assert.equal(row.reports[0].text, '第三条汇报', '最新的在前，且不含 thinking')
+      assert.equal(row.reports[1].text, '第二条汇报', '保留次新一条')
     })
   } finally {
+    Date.now = realNow
     handled.get('dispose')?.()
   }
 }

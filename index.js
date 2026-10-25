@@ -26,7 +26,7 @@ const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.5.2'
+const VERSION = '0.5.3'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
 const MAX_PROMPT_ACTIONS = 8
@@ -38,6 +38,7 @@ const SSE_HEARTBEAT_MS = 25_000
 const RATE_WINDOW_MS = 60_000
 const RATE_LIMIT = 20
 const MAX_BACKOFF_EXPONENT = 3 // 间隔最多放大 8×（factor 默认 2）
+const MAX_REPORTS = 10
 const DEFAULT_STATUS_DIR = join(homedir(), '.dsh', 'progress-tick', 'status')
 const CJK = /[\u4e00-\u9fff]/
 
@@ -341,6 +342,7 @@ function getState(sessionId) {
     mute: false,
     nudgeLog: [],
     reports: [],
+    awaitingReport: false,
     currentTool: null,
     pendingCalls: new Map(),
     subagents: new Map(),
@@ -653,7 +655,16 @@ function messageText(message) {
   const content = message.content ?? message
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
-    return content.map((part) => (typeof part === 'string' ? part : part?.text ?? '')).join(' ')
+    // 只取正文块：thinking/reasoning 里的内部独白不是给用户看的汇报。
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part
+        if (!part || typeof part.text !== 'string') return ''
+        const type = part.type
+        if (type && type !== 'text' && type !== 'output_text') return ''
+        return part.text
+      })
+      .join(' ')
   }
   return ''
 }
@@ -1128,6 +1139,8 @@ export async function apply(ctx, initialConfig) {
         appendNotice(decision, text)
 
         recordNudge(state, manual ? 'manual' : stuck ? 'stuck' : 'timer', state.anchor ? now - state.anchor : now - state.turnStartedAt, text)
+        // 提醒之后 agent 的下一条正文才算“汇报”，据此收集最近 N 次汇报正文。
+        state.awaitingReport = true
         state.nudges += 1
         state.lastNudgeAt = now
         state.anchor = now
@@ -1193,13 +1206,15 @@ export async function apply(ctx, initialConfig) {
         return
       }
       if (event.type === 'assistant/message') {
-        // 最近几次汇报正文：详情页按配置条数展示。
+        // 只收集“被提醒之后”的那条正文：那是 agent 给用户的汇报，
+        // 普通回复/思考不进入「最近汇报」列表。
         const text = messageText(event.data?.message).replace(/\s+/g, ' ').trim()
-        if (text) {
+        if (text && state.awaitingReport) {
+          state.awaitingReport = false
           state.lastReportAt = Date.now()
           state.lastReportText = text.length > 600 ? `${text.slice(0, 600)}…` : text
-          state.reports.unshift({ at: state.lastReportAt, text: text.length > 600 ? `${text.slice(0, 600)}…` : text })
-          if (state.reports.length > 10) state.reports.length = 10
+          state.reports.unshift({ at: state.lastReportAt, text: state.lastReportText })
+          if (state.reports.length > MAX_REPORTS) state.reports.length = MAX_REPORTS
           scheduleBroadcast()
         }
         return
@@ -1222,6 +1237,8 @@ export async function apply(ctx, initialConfig) {
       if (event.type === 'turn/end') {
         state.updatedAt = Date.now()
         state.currentTool = null
+        // 本轮结束还没等到汇报正文：放弃等待，避免把下一个任务的回复误记成汇报。
+        state.awaitingReport = false
         scheduleBroadcast()
       }
     } catch (error) {
