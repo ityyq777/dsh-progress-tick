@@ -1,6 +1,6 @@
 {
   "name": "dsh-progress-tick",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "主 agent 长任务执行期间定期向用户播报进度：任务驾驶舱（详情抽屉/筛选/立即催一次/本会话静音）、SSE 实时推送，可配间隔/退避/卡住检测/中英文案/子 agent 摘要，仅主 agent。",
   "type": "module",
   "main": "./index.js",

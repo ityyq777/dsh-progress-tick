@@ -11,6 +11,8 @@ reports.
 > `notice` message before the model's next request, asking it to state what it is
 > doing, what is done, and what comes next — before it calls the next tool.
 
+> 安装：`dsh plugin --profile web add github:ityyq777/dsh-progress-tick`，也可在 GUI 插件面板的「包名或地址」粘贴同一地址；详见 [安装](#安装)。
+
 ## 设置页
 
 重启 `dsh web` 后，**设置 → 进度播报** 会出现一个独立分区（与「插件市场」同级，走的是官方的 `settings.section` 槽），可以直接改全部配置：
@@ -128,11 +130,54 @@ external dashboards or debugging. Action targets are parsed out of the tool
 arguments and truncated to 160 characters, so the full parameter payload (which
 may contain credentials) is never written to disk.
 
-## Install
+## 安装
+
+三种入口共用同一套安装器：GUI 插件面板的「包名或地址」输入框、`dsh plugin add`、以及插件市场，接受的都是同一批 spec 形式。
+
+### 1. GUI（推荐给使用者）
+
+左上角 **插件 → 安装**，在「包名或地址」里粘贴：
+
+```
+github:ityyq777/dsh-progress-tick
+```
+
+### 2. 命令行
+
+```sh
+# 跟随 main 最新提交
+dsh plugin --profile web add github:ityyq777/dsh-progress-tick
+
+# 锁定版本（tag 形式，推荐）
+dsh plugin --profile web add github:ityyq777/dsh-progress-tick#v0.5.6
+
+# GitHub Releases 的源码 tarball
+dsh plugin --profile web add https://github.com/ityyq777/dsh-progress-tick/archive/refs/tags/v0.5.6.tar.gz
+```
+
+安装器解析到包内 `dsh.bundle.patch` 后，会自动把它写进 profile 的 `dsh.profile.bundles` 并启用，重启 `dsh web` 即生效。
+
+### 3. 本地开发（改源码即生效）
+
+```sh
+dsh plugin --profile web add /absolute/path/to/dsh-progress-tick
+# 等价于在 profile 里写： "dsh-progress-tick": "link:/absolute/path/to/dsh-progress-tick"
+```
+
+### 4. npm（发布后）
 
 ```sh
 dsh plugin --profile web add dsh-progress-tick
 ```
+
+### 升级与卸载
+
+```sh
+dsh plugin --profile web update dsh-progress-tick   # 升级
+dsh plugin --profile web remove dsh-progress-tick   # 卸载
+```
+
+> 依赖 GitHub 可达（国内可能需要代理或镜像）；git 安装落盘的是真实副本，源码改动不会热更新，改代码请改用第 3 种 `link:` 方式。
 
 ## Known limits
 
