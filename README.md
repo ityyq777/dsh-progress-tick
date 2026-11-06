@@ -11,217 +11,29 @@ reports.
 > `notice` message before the model's next request, asking it to state what it is
 > doing, what is done, and what comes next — before it calls the next tool.
 
-> 安装：GUI 插件面板/插件市场点「安装」按钮（桌面端用应用内「设置 → 插件」），命令行 `dsh plugin --profile <profile> add github:ityyq777/dsh-progress-tick`；详见 [安装](#安装)。
+> 安装：GUI 插件面板/插件市场点「安装」按钮（桌面端用应用内「设置 → 插件」），命令行 `dsh plugin --profile <profile> add github:ityyq777/dsh-progress-tick`；详见 [docs/install.md](docs/install.md)。
 
-## 为什么它比“你自己插话问进度”更管用
+## 功能速览
 
-手动在对话里问一句“进度怎么样了？”，经常会出现“它没理我”的情况；而本插件的提醒几乎每次都生效。差别不在措辞，而在这四件事：
+- **定期提醒**：连续执行超过设定间隔且没有“有信息量的汇报”时，在下一个 step 注入一条 `notice`；子 agent 永不提醒。
+- **卡住检测**：同一动作连续重复到阈值时，提醒改口问“你卡在哪、试过什么”。
+- **退避与上限**：单轮提醒越多间隔越长（封顶 8×），可设每轮次数上限。
+- **任务驾驶舱**：左侧栏会话总览 + 每个会话的「进度」标签页（提醒记录、最近汇报正文、当前工具耗时、子 agent 树），支持立即催一次 / 本会话静音。
+- **`/progress` 命令**：不等计时器，随时让主 agent 立刻汇报。
+- **设置页**：全部配置项内置表单，改动即时生效。
 
-| 维度 | 用户插话 | 本插件 |
-| --- | --- | --- |
-| 注入时机 | 任意时刻发出，只能等**下一次模型请求**才被读到；撞上长工具（构建、`npm install`）时，要等它返回 | 只在 `agent/pre-step`（请求组装前一刻）注入 |
-| 请求内位置 | 可能落在上下文中间，后面还跟着大段工具结果 | 通常是**最后一条**，紧贴即将生成的位置 |
-| 次数 | 只问一次，模型没答就结束了 | **循环催**：没检测到 informative 汇报就按退避继续发 |
-| 内容 | “进度如何？”——模型没有可答的抓手 | 带具体状态：已运行多久、当前工具耗时、上次汇报时间，疑似卡住时还会问“是不是卡住了、已经试过什么” |
+## 文档
 
-另外，提醒是 `notice` 形态（`source.kind = 'progress-tick'`），文案本身是“待办”而不是“闲聊”，被当作需要响应的指令的概率更高。
-
-### 一条刻意为之的让位规则
-
-如果你在某一轮里刚插过话，插件会在那一步**主动沉默**，并重锚计时器（`index.js` 的 `agent/pre-step`：检测到 `source.kind === 'user'` 就 return）——用户刚说完话时再补一句“你该汇报了”是自相矛盾的。
-
-代价是：你插话而模型顺势继续干活、没有回答时，插件不会补刀。想立刻拿到回答，用 `/progress` 更稳；或等某个工具刚返回、回复正在生成的瞬间再问。
-
-## 设置页
-
-重启 `dsh web` 后，**设置 → 进度播报** 会出现一个独立分区（与「插件市场」同级，走的是官方的 `settings.section` 槽），可以直接改全部配置：
-
-- 开关是 DSH 原生风格，输入框/按钮跟随主题（只依赖 `currentColor` 与 `--dsw-radius-*`，浅色/深色/换肤都融合）
-- 改动点「保存」立刻写进设置文档并对当前进程生效，无需重启
-- 「恢复默认」清掉本插件的用户覆盖
-- 语言字段是下拉（auto / zh / en）
-
-## 任务驾驶舱（左侧栏「进度播报」）
-
-0.5.0 起，左侧栏一级入口（与「插件 / 任务看板 / SSH」同级）是一个**任务驾驶舱**，0.5.1 起单会话详情从浮层抽屉改为会话视图里的「进度」标签页：
-
-- **会话列表**：标题、工作区、已运行时长、本轮提醒次数、最近动作、下次提醒倒计时、疑似卡住标记
-- **搜索与筛选**：按标题 / 会话 ID / 目录搜索；筛选「全部 / 运行中 / 已提醒 / 疑似卡住 / 已静音 / 已结束」
-- **会话「进度」标签页**（在「对话」「轨迹」之后，点列表卡片跳转过去）：
-  - 每次提醒的**时间、原因**（计时到期 / 疑似卡住 / 手动）与触发时已运行时长
-  - **最近汇报正文**：提醒发出后 agent 回给用户的那条正文（只取正文块，不含 thinking），最近 N 条，N 由设置项「汇报正文条数」控制（默认 3，0 = 不展示）
-  - **当前工具已耗时**：面板每秒走表，不需要等下一次快照
-  - **子 agent 树**：名称/标题、运行时长、静默时长、当前工具、停滞标记
-- **立即催一次**：给该会话排一次手动提醒，下一个 step 生效（不受间隔与轮次上限约束）
-- **本会话静音**：只挡自动提醒，`/progress` 与「立即催一次」仍然有效；内存态，重启即清
-
-### 数据通道
-
-| 端点 | 说明 |
+| 想了解 | 看这里 |
 | --- | --- |
-| `GET /api/progress-tick/status` | 全量快照（轮询兜底） |
-| `GET /api/progress-tick/events` | SSE，`snapshot` 事件推送同一份快照；25s 心跳 |
-| `POST /api/progress-tick/nudge` | `{ sessionId }` 手动催一次 |
-| `POST /api/progress-tick/mute` | `{ sessionId, muted }` 会话静音 |
+| 怎么装（GUI / 命令行 / 本地开发 / npm / 桌面端），以及为什么有的命令装不上 | [docs/install.md](docs/install.md) |
+| 为什么它比你自己插话问进度更管用（设计取舍） | [docs/design-why.md](docs/design-why.md) |
+| 运行行为：计时、汇报判定、退避、卡住升级、已知限制 | [docs/behaviour.md](docs/behaviour.md) |
+| 全部配置项、设置页、`/progress`、状态文件 | [docs/configuration.md](docs/configuration.md) |
+| 界面：任务驾驶舱、「进度」标签页、HTTP/SSE 数据通道与防护 | [docs/ui.md](docs/ui.md) |
 
-页面优先用 SSE 实时更新，首帧到达前与断线期间自动退回 5 秒轮询（状态页会显示「实时推送 / 轮询兜底」）。
+## 版本与反馈
 
-**防护**：这四条路由绕过 DSH 的 `/api` 认证桥，因此自己做门禁——仅回环地址、`Host` 必须是 `localhost` 或 IP 字面量（防 DNS rebinding）、写操作要求同源 + `content-type: application/json` + `x-progress-tick: 1` 自定义头、4KB 体积上限、每 60 秒 20 次限流。
-
-## Behaviour
-
-| Situation | What happens |
-| --- | --- |
-| A run starts (`idle → running`) | The timer starts here; per-turn counters reset |
-| `intervalMinutes` elapse without an informative report | One `notice` is appended before the next request |
-| The model writes an **informative** report | Timer re-anchors (see below) |
-| The run finishes before the interval | Timer resets; the next run starts from zero |
-| The user sends a message mid-run (`source.kind === 'user'`) | No nudge on that step — the step already carries a fresh human message, so the timer simply re-anchors |
-| Subagents / teammates | Never nudged (`delegationDepth > 0` or `origin === 'subagent'`) |
-
-### What counts as "already reported"
-
-Not every visible sentence resets the timer — otherwise a quick "ok, continuing"
-would silently defeat the whole point. A reply counts only when **either**:
-
-- the text emitted since the last report is at least `minReportChars` characters, **or**
-- it contains one of the `reportMarkers` keywords (`完成`, `发现`, `下一步`, … ).
-
-Both are configurable.
-
-### Escalation
-
-- **Back-off**: after `backoffAfter` nudges in one turn, the effective interval is
-  multiplied by `backoffFactor` (capped at 8×), so a long turn does not turn into
-  a stream of reminders.
-- **Stuck detection**: when the same action (tool + target) repeats
-  `stuckThreshold` times in a row, the reminder changes from "report progress" to
-  "are you stuck? say where and what you already tried".
-- **Detail level**: every `detailEvery`-th reminder includes a compact summary of
-  the most recent actions (tool name + target + failure marker) and subagent
-  status, so the model has something concrete to report.
-
-## Configuration
-
-The plugin registers its own section in the Settings panel — **Settings →
-进度播报** (order 60, right after the built-in sections) — with a generated form
-over this table. The same slot (`settings.section`) is the one `dshmarket` uses,
-so it shows up wherever that panel is installed.
-
-Saving from the form goes through `remote.settings.mutate()` with revision
-fencing; **恢复默认** unsets the fields you overrode. Every field is
-`volatile`, so a saved change applies on the next step — no restart, no remount.
-You can still edit the values by hand in the profile patch if you prefer.
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `enabled` | `true` | Master switch |
-| `intervalMinutes` | `5` | Minutes between reminders (min 10 s, max 24 h) |
-| `minReportChars` | `40` | Characters of visible text that count as a report |
-| `reportMarkers` | `完成,已完成,发现,下一步,…` | Any of these also counts as a report |
-| `maxNudgesPerTurn` | `0` | Cap per turn, `0` = unlimited |
-| `backoffAfter` | `3` | Nudge count after which back-off starts |
-| `backoffFactor` | `2` | Interval multiplier (capped at 8×) |
-| `locale` | `auto` | `auto` follows the user's language; or `zh` / `en` |
-| `includeActions` | `true` | Include recent-action summary |
-| `actionCount` | `3` | How many actions to include |
-| `detailEvery` | `2` | Every Nth reminder is the detailed variant |
-| `stuckDetection` | `true` | Switch to the "are you stuck?" reminder |
-| `stuckThreshold` | `3` | Consecutive identical actions that count as stuck |
-| `subagentSummary` | `true` | Mention subagent status in reminders |
-| `subagentStaleMinutes` | `10` | A subagent silent this long is reported as stalled |
-| `statusFile` | `true` | Write a per-session JSON state file |
-| `statusDir` | `""` | State directory, empty = `~/.dsh/progress-tick/status` |
-| `commandEnabled` | `true` | Register `/progress` |
-
-## `/progress`
-
-Type `/progress` in a session to have the main agent report immediately, without
-waiting for the timer (handy while a long tool call is running — the reminder is
-queued and injected before the next request).
-
-## Status file
-
-With `statusFile` enabled, each session writes
-`~/.dsh/progress-tick/status/<sessionId>.json` with the current anchor, nudge
-count, pending characters, recent actions, and subagent bookkeeping — useful for
-external dashboards or debugging. Action targets are parsed out of the tool
-arguments and truncated to 160 characters, so the full parameter payload (which
-may contain credentials) is never written to disk.
-
-## 安装
-
-### 0. 先看一眼：为什么有的命令装不上
-
-这个 README 早期版本给的命令有两个坑，这里一并说明（0.5.8 修正）：
-
-- **不加 `--profile`**：`dsh plugin` 是 profile 级工具，`--profile <name>` 是必填项，裸跑只会报 `required option '--profile <name>' not specified`。
-- **手动加 `-w`**：`dsh plugin add` 会把参数原样转发给 pnpm。pnpm 9 及更早在工作区根目录 add 会报 `ERR_PNPM_ADDING_TO_ROOT`，于是有人传 `-w`；但 profile 目录自带 `pnpm-workspace.yaml`（`packages: ["."]`），pnpm 10+ 不再需要 `-w`——**先 `corepack enable` 或升级到 pnpm ≥ 10，就不要也不该再加 `-w`**。DSH 官方安装器与 dshmarket 都已按 profile 是否工作区自动注入 `-w`，无需手工干预。
-- **桌面端（Electron）**：launcher 明确拒绝 `dsh plugin --profile desktop`（“profile \"desktop\" is managed exclusively by the Electron application”）。桌面端**没有 CLI 安装路径**，这不是插件的问题，任何第三方都改不了——见第 5 节。
-
-三种入口共用同一套安装器：GUI 插件面板的「包名或地址」输入框、`dsh plugin add`、以及插件市场，接受的都是同一批 spec 形式。
-
-### 1. GUI（推荐给使用者）
-
-左上角 **插件 → 安装**（或插件市场卡片上的「安装」按钮），在「包名或地址」里粘贴：
-
-```
-github:ityyq777/dsh-progress-tick
-```
-
-### 2. 命令行
-
-把 `<profile>` 换成你的 profile 名（默认网页版是 `web`；`dsh plugin --profile web list` 之类的报错提示也认这个名字）。
-
-```sh
-# 跟随 main 最新提交
-dsh plugin --profile <profile> add github:ityyq777/dsh-progress-tick
-
-# 锁定版本（tag 形式，推荐）
-dsh plugin --profile <profile> add github:ityyq777/dsh-progress-tick#v0.5.7
-
-# GitHub Releases 的源码 tarball
-dsh plugin --profile <profile> add https://github.com/ityyq777/dsh-progress-tick/archive/refs/tags/v0.5.7.tar.gz
-```
-
-若你本机 pnpm 是 9.x 且上面命令报 `ERR_PNPM_ADDING_TO_ROOT`，临时加 `-w` 可用（`add` 后紧跟即可）；更推荐升级 pnpm。
-
-安装器解析到包内 `dsh.bundle.patch` 后，会自动把它写进 profile 的 `dsh.profile.bundles` 并启用，重启 `dsh <profile>` 即生效。
-
-### 3. 本地开发（改源码即生效）
-
-```sh
-dsh plugin --profile <profile> add /absolute/path/to/dsh-progress-tick
-# 等价于在 profile 里写： "dsh-progress-tick": "link:/absolute/path/to/dsh-progress-tick"
-```
-
-### 4. npm（发布后）
-
-```sh
-dsh plugin --profile <profile> add dsh-progress-tick
-```
-
-### 5. 桌面端（Electron 版 DSH）
-
-桌面端的 profile 由应用独占管理，CLI 一律拒绝。正确姿势只有一条：打开桌面端 **设置 → 插件**，在那里搜索/安装本插件（同样支持粘贴 `github:` 地址，以应用界面实际提供的入口为准）。如果桌面端列表里搜不到：先确认应用已更新到较新版本，再向应用反馈——那是宿主能力边界，不是本插件的安装问题。
-
-### 升级与卸载
-
-```sh
-dsh plugin --profile <profile> update dsh-progress-tick   # 升级
-dsh plugin --profile <profile> remove dsh-progress-tick   # 卸载
-```
-
-> 依赖 GitHub 可达（国内可能需要代理或镜像）；git 安装落盘的是真实副本，源码改动不会热更新，改代码请改用第 3 种 `link:` 方式。
-
-## Known limits
-
-- **Inside one long tool call** nothing can be injected: `agent/pre-step` only
-  fires between steps, so a 10-minute `bash` is only nudged once it returns.
-  `maxNudgesPerTurn` and back-off keep that from turning into noise.
-- Recent-action summaries rely on `session/event` (`tool/call`, `tool/result`).
-  If an event shape changes upstream, reminders still work; only the action
-  summary and stuck detection degrade.
-- Subagent bookkeeping reads the child session header (`parentSession`,
-  `origin`, `delegationDepth`); a session store that re-roots sessions would
-  lose that attribution.
+- Releases：<https://github.com/ityyq777/dsh-progress-tick/releases>
+- Issues：<https://github.com/ityyq777/dsh-progress-tick/issues>
+- 自测：仓库根目录 `node test.mjs`（零依赖）。
