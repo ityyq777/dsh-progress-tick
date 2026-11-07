@@ -40,9 +40,17 @@ dsh plugin --profile <profile> add https://github.com/ityyq777/dsh-progress-tick
 ## 3. 本地开发（改源码即生效）
 
 ```sh
-dsh plugin --profile <profile> add /absolute/path/to/dsh-progress-tick
-# 等价于在 profile 里写： "dsh-progress-tick": "link:/absolute/path/to/dsh-progress-tick"
+dsh plugin --profile <profile> add dsh-progress-tick@link:/absolute/path/to/dsh-progress-tick
+# 等价于在 profile 的 package.json 里写： "dsh-progress-tick": "link:/absolute/path/to/dsh-progress-tick"
 ```
+
+改用 `link:` 而不是裸的绝对路径：裸路径在某些 pnpm 配置下会被**拷贝**成真实目录（`file:`），此后改源码不会生效。
+
+**改了源码但界面没变？** 按顺序排查：
+
+1. `grep -c "新版里才有的字符串" <profile>/node_modules/dsh-progress-tick/client/client.js`——命中数 0 说明装的是副本，重跑一次上面的 `link:` 命令（安装器会打印 `Replaced "…(file:…)" with "…@link:…"`）；
+2. 浏览器强刷（`Cmd/Ctrl+Shift+R`）：客户端包的 URL 带构建版本号，刷新才会取新包；
+3. 改了 `index.js`（Host 侧）则必须重启 `dsh <profile>`。
 
 ## 4. npm（发布后）
 
