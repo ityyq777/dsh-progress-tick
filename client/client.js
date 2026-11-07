@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-progress-tick-style'
     // 样式表随版本换代：旧版本注入的 <style> 仍在页面里时按 rev 替换，
     // 否则新加的类名没有规则，控件会退回浏览器默认样式（0.5.0 升级时踩过）。
-    const STYLE_REV = '0.5.5'
+    const STYLE_REV = '0.6.0'
 
     function ensureStyle() {
       if (typeof document === 'undefined') return
@@ -53,6 +53,18 @@ window.__ModuleLoader__.load({
     .ptick-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:12px;border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 5%,transparent)}
     .ptick-pill b{font-weight:650}
     .ptick-list{display:flex;flex-direction:column;gap:10px}
+    .ptick-group{display:flex;flex-direction:column;gap:8px}
+    .ptick-group+.ptick-group{margin-top:6px}
+    .ptick-group-head{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:9px;cursor:pointer;user-select:none;outline:none}
+    .ptick-group-head:hover{background:color-mix(in oklab,currentColor 5%,transparent)}
+    .ptick-group-head:focus-visible{box-shadow:0 0 0 2px color-mix(in oklab,var(--ptick-accent) 45%,transparent)}
+    .ptick-group-chev{width:10px;flex:none;font-size:9px;line-height:1;opacity:.5;transition:transform .16s ease}
+    .ptick-group.is-collapsed .ptick-group-chev{transform:rotate(-90deg)}
+    .ptick-group-name{font-size:12px;font-weight:650;letter-spacing:.2px;white-space:nowrap;max-width:46%;overflow:hidden;text-overflow:ellipsis}
+    .ptick-group-path{font-size:11px;opacity:.42;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;font-family:var(--dsw-font-family-mono,ui-monospace,monospace)}
+    .ptick-group-stat{font-size:11px;opacity:.55;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .ptick-group-stat b{font-weight:650;opacity:.85}
+    .ptick-group-body{display:flex;flex-direction:column;gap:10px;padding-top:2px}
     .ptick-card2{border:1px solid var(--ptick-line);background:color-mix(in oklab,currentColor 4%,transparent);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;transition:border-color .15s ease,background .15s ease}
     .ptick-card2:hover{border-color:color-mix(in oklab,currentColor 26%,transparent)}
     .ptick-card2-top{display:flex;align-items:center;gap:10px;min-width:0}
@@ -891,7 +903,7 @@ window.__ModuleLoader__.load({
             : subagents.map((node) => h(SubagentNode, { key: node.id, node, depth: 0 }))))
     }
 
-    function StatusCard({ item, now, busy, onOpen, onNudge, onMute }) {
+    function StatusCard({ item, now, busy, grouped, onOpen, onNudge, onMute }) {
       const interval = Math.max(1, Number(item.intervalMs) || 1)
       const ratio = Math.min(1, Math.max(0, (Number(item.sinceReportMs) || 0) / interval))
       const where = basename(item.cwd) || item.short
@@ -912,7 +924,7 @@ window.__ModuleLoader__.load({
       h('div', { className: 'ptick-card2-top' },
         h('i', { className: item.running ? 'ptick-dot is-live' : 'ptick-dot' }),
         h('div', { className: 'ptick-card2-title', title: item.title || item.id }, item.title || `会话 ${item.short}`),
-        h('div', { className: 'ptick-card2-where' }, where),
+        grouped ? null : h('div', { className: 'ptick-card2-where' }, where),
         h('div', { className: 'ptick-card2-actions' },
           h('button', {
             className: 'ptick-mini is-primary',
@@ -1031,6 +1043,52 @@ window.__ModuleLoader__.load({
       })
       const ordered = filtered.slice().sort((a, b) => Number(b.running) - Number(a.running) || (b.elapsedMs || 0) - (a.elapsedMs || 0)).slice(0, 50)
 
+      // 按工作区（会话 cwd）分组：目录名做标题、完整路径做副标题；有运行中会话的组排前面。
+      const groups = []
+      const groupIndex = new Map()
+      for (const item of ordered) {
+        const path = typeof item.cwd === 'string' ? item.cwd.trim() : ''
+        const key = path || '\u0000none'
+        let group = groupIndex.get(key)
+        if (!group) {
+          group = {
+            key,
+            path,
+            label: path ? basename(path) || path : '未标注目录',
+            items: [],
+            running: 0,
+            nudges: 0,
+          }
+          groupIndex.set(key, group)
+          groups.push(group)
+        }
+        group.items.push(item)
+        if (item.running) group.running += 1
+        group.nudges += Number(item.nudges) || 0
+      }
+      groups.sort((a, b) => Number(b.running) - Number(a.running) || a.label.localeCompare(b.label, 'zh-Hans-CN'))
+
+      const [collapsed, setCollapsed] = React.useState(() => {
+        try {
+          const raw = window.localStorage.getItem('dsh-progress-tick.groups.collapsed')
+          const list = raw ? JSON.parse(raw) : []
+          return new Set(Array.isArray(list) ? list.map((value) => String(value)) : [])
+        } catch (error) {
+          return new Set()
+        }
+      })
+      const toggleGroup = (key) => setCollapsed((previous) => {
+        const next = new Set(previous)
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+        try {
+          window.localStorage.setItem('dsh-progress-tick.groups.collapsed', JSON.stringify([...next]))
+        } catch (error) {
+          /* 隐私模式下 localStorage 不可写，忽略 */
+        }
+        return next
+      })
+
       return h('div', { className: 'ptick-page' },
         h('div', { className: 'ptick-inner' },
           h('div', { className: 'ptick-page-head' },
@@ -1067,15 +1125,44 @@ window.__ModuleLoader__.load({
             ? (stream.phase === 'ready'
               ? h('div', { className: 'ptick-empty' }, needle || filter !== 'all' ? '没有匹配的会话。' : '当前没有正在执行的会话。发起一个任务后，这里会显示它的运行时长、提醒记录与子 agent。')
               : null)
-            : h('div', { className: 'ptick-list' }, ordered.map((item) => h(StatusCard, {
-              key: item.id,
-              item,
-              now,
-              busy: busyId === item.id,
-              onOpen: (target) => (typeof openSession === 'function' ? openSession(target.id) : null),
-              onNudge: nudge,
-              onMute: mute,
-            }))),
+            : h('div', { className: 'ptick-list' }, groups.map((group) => {
+              const forceOpen = Boolean(needle) || filter !== 'all'
+              const isCollapsed = !forceOpen && collapsed.has(group.key)
+              return h('div', { key: group.key, className: isCollapsed ? 'ptick-group is-collapsed' : 'ptick-group' },
+                h('div', {
+                  className: 'ptick-group-head',
+                  role: 'button',
+                  tabIndex: 0,
+                  'aria-expanded': !isCollapsed,
+                  title: group.path || '该会话没有上报工作目录',
+                  onClick: () => toggleGroup(group.key),
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      toggleGroup(group.key)
+                    }
+                  },
+                },
+                h('span', { className: 'ptick-group-chev', 'aria-hidden': 'true' }, '▼'),
+                h('span', { className: 'ptick-group-name' }, group.label),
+                h('span', { className: 'ptick-group-path' }, group.path || '—'),
+                h('span', { className: 'ptick-group-stat' },
+                  group.running > 0 ? h(React.Fragment, null, '运行中 ', h('b', null, String(group.running)), ' / ') : null,
+                  h('b', null, String(group.items.length)), ' 个会话',
+                  group.nudges > 0 ? h(React.Fragment, null, ' · 提醒 ', h('b', null, String(group.nudges))) : null)),
+                isCollapsed
+                  ? null
+                  : h('div', { className: 'ptick-group-body' }, group.items.map((item) => h(StatusCard, {
+                    key: item.id,
+                    item,
+                    now,
+                    busy: busyId === item.id,
+                    grouped: true,
+                    onOpen: (target) => (typeof openSession === 'function' ? openSession(target.id) : null),
+                    onNudge: nudge,
+                    onMute: mute,
+                  }))))
+            })),
 
           h('div', { className: 'ptick-card2-foot', style: { paddingLeft: 2, opacity: 0.45 } },
             h('span', null, value ? `dsh-progress-tick v${value.version} · ${stream.live ? 'SSE 推送' : '每 5 秒轮询'}` : ''),
