@@ -9,7 +9,7 @@
 | `minReportChars` | `40` | Characters of visible text that count as a report |
 | `reportMarkers` | `完成,已完成,发现,下一步,…` | Any of these also counts as a report |
 | `maxNudgesPerTurn` | `0` | Cap per turn, `0` = unlimited |
-| `backoffAfter` | `3` | Nudge count after which back-off starts |
+| `backoffAfter` | `3` | Number of **automatic** reminders after which back-off starts (manual "nudge now" does not count) |
 | `backoffFactor` | `2` | Interval multiplier (capped at 8×) |
 | `locale` | `auto` | `auto` follows the user's language; or `zh` / `en` |
 | `includeActions` | `true` | Include recent-action summary |

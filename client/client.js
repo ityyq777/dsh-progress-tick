@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-progress-tick-style'
     // 样式表随版本换代：旧版本注入的 <style> 仍在页面里时按 rev 替换，
     // 否则新加的类名没有规则，控件会退回浏览器默认样式（0.5.0 升级时踩过）。
-    const STYLE_REV = '0.6.0'
+    const STYLE_REV = '0.6.2'
 
     function ensureStyle() {
       if (typeof document === 'undefined') return
@@ -849,7 +849,13 @@ window.__ModuleLoader__.load({
             }, item.muted ? '取消静音' : '本会话静音'))),
 
         h('div', { className: 'ptick-metrics' },
-          h(Meta, { label: '本轮提醒', value: `${item.nudges || 0} 次`, note: caps ? `上限 ${caps} 次` : '不限次数' }),
+          h(Meta, {
+            label: '本轮提醒',
+            value: `${item.nudges || 0} 次`,
+            note: [caps ? `上限 ${caps} 次` : '不限次数', item.manualNudges ? `含手动 ${item.manualNudges}` : '']
+              .filter(Boolean)
+              .join(' · '),
+          }),
           h(Meta, {
             label: item.capped ? '提醒上限' : '下次提醒',
             value: item.capped ? '已用完' : item.running ? formatCountdown(item.nextInMs) : '—',

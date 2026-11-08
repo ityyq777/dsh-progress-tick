@@ -1,4 +1,5 @@
-// 零依赖自测：node test.mjs（需 NODE_PATH 指向 dsh profile 的 node_modules 以解析 schemastery）
+// 零依赖自测：node test.mjs
+// 需要本目录 node_modules/@deepseek-ai/schemastery 可解析（通常是指向 dsh profile node_modules 的软链）
 import assert from 'node:assert/strict'
 import * as moduleNamespace from './index.js'
 import {
@@ -582,6 +583,64 @@ ok('statusSnapshot 空注册表结构', () => {
     assert.equal(row().stuck, false)
   })
   handlers.get('dispose')?.()
+}
+
+// ---- 手动催一次不吃退避、不占上限、也不重置计时锚点
+{
+  const handlers = new Map()
+  let cmd = null
+  const commands = { register: (def) => { cmd = def; return () => {} } }
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handlers.set(name, fn) }
+      if (prop === 'get') return (name) => (name === 'commands' ? commands : undefined)
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const config = { statusFile: false, intervalMinutes: 0.17, backoffAfter: 0, backoffFactor: 2, maxNudgesPerTurn: 5 }
+  await moduleNamespace.apply(fakeCtx, config)
+  const base = resolveIntervalMs(config)
+
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    const agent = { session: { id: 'session-manual', header: {} } }
+    handlers.get('agent/status')({ agent, status: 'running' })
+    clock += 11_000
+
+    const row = () => statusSnapshot(config).sessions.find((item) => item.id === 'session-manual')
+
+    // 手动催一次（驾驶舱按钮与 /progress 走同一条 force 路径）
+    cmd.handler({ agent })
+    const manualDecision = { kind: 'enter', messages: [] }
+    await handlers.get('agent/pre-step')({ agent }, async () => manualDecision)
+    ok('手动催一次会真的发提醒', () => {
+      assert.equal(manualDecision.messages.filter((m) => m.source?.kind === 'progress-tick').length, 1)
+    })
+    ok('手动催不涨退避间隔', () => {
+      assert.equal(row().manualNudges, 1)
+      assert.equal(row().autoNudges, 0)
+      assert.equal(row().intervalMs, base, '手动催不应把下次间隔翻倍')
+    })
+    ok('手动催不重置计时锚点', () => {
+      assert.ok(row().sinceReportMs >= 10_000, '倒计时不应从点击那刻重新数')
+    })
+
+    // 再过一会儿：这次是自动提醒，退避应正常生效
+    clock += 11_000
+    const autoDecision = { kind: 'enter', messages: [] }
+    await handlers.get('agent/pre-step')({ agent }, async () => autoDecision)
+    ok('自动提醒仍按退避拉长', () => {
+      assert.equal(row().autoNudges, 1)
+      assert.equal(row().intervalMs, base * 2)
+    })
+  } finally {
+    Date.now = realNow
+    handlers.get('dispose')?.()
+  }
 }
 
 if (process.exitCode) console.error(`✗ 存在失败断言（通过 ${passed} 项）`)

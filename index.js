@@ -26,7 +26,7 @@ const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.6.1'
+const VERSION = '0.6.2'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
 const MAX_PROMPT_ACTIONS = 8
@@ -338,7 +338,8 @@ function getState(sessionId) {
     lastNudgeAt: 0,
     title: '',
     cwd: '',
-    nudges: 0,
+    nudges: 0,          // 本轮自动提醒次数：决定退避与上限
+    manualNudges: 0,    // 本轮手动催次数：不计入退避/上限
     pendingChars: 0,
     actions: [],
     lastKey: '',
@@ -575,7 +576,8 @@ async function writeStatusFile(state, config) {
     updatedAt: new Date().toISOString(),
     running: !state.done,
     muted: Boolean(state.mute),
-    nudges: state.nudges,
+    nudges: state.nudges + state.manualNudges,
+    manualNudges: state.manualNudges,
     pendingChars: state.pendingChars,
     repeat: state.repeat,
     lastActionKey: state.lastKey,
@@ -713,7 +715,9 @@ export function statusSnapshot(config) {
       running: !state.done,
       muted: Boolean(state.mute),
       forcePending: Boolean(state.force),
-      nudges: state.nudges,
+      nudges: state.nudges + state.manualNudges,
+      autoNudges: state.nudges,
+      manualNudges: state.manualNudges,
       caps: max,
       capped,
       intervalMs: interval,
@@ -1062,6 +1066,7 @@ export async function apply(ctx, initialConfig) {
         const cwd = agent.session.header?.cwd
         if (typeof cwd === 'string' && cwd) state.cwd = cwd
         state.nudges = 0
+        state.manualNudges = 0
         state.pendingChars = 0
         state.actions = []
         state.repeat = 0
@@ -1138,30 +1143,37 @@ export async function apply(ctx, initialConfig) {
         const max = Number(config.maxNudgesPerTurn ?? 0) || 0
         const overLimit = max > 0 && state.nudges >= max
         const due = now - state.anchor >= interval
-        if (!state.force && (!due || overLimit)) return decision
+        // 刚提醒过（含手动催）就先别再来一条，至少隔 10s，避免手动催后立刻补一枪。
+        const gapOk = !state.lastNudgeAt || now - state.lastNudgeAt >= MIN_INTERVAL_MS
+        if (!state.force && (!due || overLimit || !gapOk)) return decision
 
         // 手动催一次要能区分出来：它不受间隔/上限约束，也不该被当成“卡住”。
         const manual = state.force && state.forceRequested
         const stuck = !manual && Boolean(config.stuckDetection) && state.repeat >= Math.max(2, Number(config.stuckThreshold ?? 3))
         const every = Math.max(1, Number(config.detailEvery ?? 2))
-        const detail = (state.nudges + 1) % every === 0
+        const detail = (state.nudges + state.manualNudges + 1) % every === 0
         const text = buildMessage(state, config, { stuck, detail })
         appendNotice(decision, text)
 
         recordNudge(state, manual ? 'manual' : stuck ? 'stuck' : 'timer', state.anchor ? now - state.anchor : now - state.turnStartedAt, text)
         // 提醒之后 agent 的下一条正文才算“汇报”，据此收集最近 N 次汇报正文。
         state.awaitingReport = true
-        state.nudges += 1
+        // 手动催只是“现在说一句”，不能让后续自动提醒变稀、也不该占每轮上限。
+        if (manual) state.manualNudges += 1
+        else state.nudges += 1
         state.lastNudgeAt = now
-        state.anchor = now
-        state.pendingChars = 0
+        // 手动催不是“汇报”，不重置计时锚点：否则倒计时会从点击那刻重新数，看起来反而变长。
+        if (!manual) {
+          state.anchor = now
+          state.pendingChars = 0
+        }
         state.force = false
         state.forceRequested = false
         state.updatedAt = now
         if (stuck) state.repeat = 0
         scheduleBroadcast()
         void writeStatusFile(state, config)
-        ctxLog.info?.(`progress-tick: nudged ${state.sessionId} (#${state.nudges}${manual ? ', manual' : stuck ? ', stuck' : ''})`)
+        ctxLog.info?.(`progress-tick: nudged ${state.sessionId} (#${state.nudges + state.manualNudges}${manual ? ', manual' : stuck ? ', stuck' : ''})`)
       } catch (error) {
         ctxLog.warn?.(`pre-step failed: ${error?.message ?? error}`)
       }
