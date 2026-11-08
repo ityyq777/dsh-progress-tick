@@ -26,7 +26,7 @@ const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.6.2'
+const VERSION = '0.6.3'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
 const MAX_PROMPT_ACTIONS = 8
@@ -68,6 +68,7 @@ export const Config = Schema.object({
   statusDir: Schema.string().default('').description('状态文件目录，留空 = ~/.dsh/progress-tick/status').volatile(),
   commandEnabled: Schema.boolean().default(true).description('注册 /progress 命令，随时让 agent 立即汇报').volatile(),
   reportHistoryCount: Schema.number().default(3).min(0).max(10).description('详情页展示最近几条汇报正文，0 = 不展示').volatile(),
+  manualAffectsTimer: Schema.boolean().default(false).description('手动「催一次」是否也顺延计时（计入退避与上限、重置倒计时）').volatile(),
 })
 
 // ---------------------------------------------------------------- 纯函数（可测）
@@ -1158,12 +1159,13 @@ export async function apply(ctx, initialConfig) {
         recordNudge(state, manual ? 'manual' : stuck ? 'stuck' : 'timer', state.anchor ? now - state.anchor : now - state.turnStartedAt, text)
         // 提醒之后 agent 的下一条正文才算“汇报”，据此收集最近 N 次汇报正文。
         state.awaitingReport = true
-        // 手动催只是“现在说一句”，不能让后续自动提醒变稀、也不该占每轮上限。
-        if (manual) state.manualNudges += 1
-        else state.nudges += 1
+        // 默认：手动催只是“现在说一句”，不参与退避/上限，也不重置倒计时。
+        // 想让它像普通提醒一样顺延计时，把 manualAffectsTimer 打开即可。
+        const countsAsTimer = !manual || config.manualAffectsTimer === true
+        if (countsAsTimer) state.nudges += 1
+        else state.manualNudges += 1
         state.lastNudgeAt = now
-        // 手动催不是“汇报”，不重置计时锚点：否则倒计时会从点击那刻重新数，看起来反而变长。
-        if (!manual) {
+        if (countsAsTimer) {
           state.anchor = now
           state.pendingChars = 0
         }

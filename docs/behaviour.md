@@ -31,9 +31,10 @@ Both are configurable.
   reminder changes from "report progress" to "are you stuck? say where and what you
   already tried".
 - **Manual "nudge now"** (`/progress` or the cockpit button): sends one reminder
-  immediately, but does **not** increase the back-off, does **not** consume
-  `maxNudgesPerTurn`, and does **not** reset the countdown anchor — the schedule
-  keeps running as if you had not clicked.
+  immediately but, by default, does **not** increase the back-off, does **not**
+  consume `maxNudgesPerTurn`, and does **not** reset the countdown anchor — the
+  schedule keeps running as if you had not clicked. Set `manualAffectsTimer: true`
+  if you prefer a manual nudge to behave exactly like a scheduled one.
 - **Detail level**: every `detailEvery`-th reminder includes a compact summary of
   the most recent actions (tool name + target + failure marker) and subagent
   status, so the model has something concrete to report.

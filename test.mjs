@@ -643,6 +643,46 @@ ok('statusSnapshot 空注册表结构', () => {
   }
 }
 
+// ---- manualAffectsTimer = true 时，手动催按普通提醒处理
+{
+  const handlers = new Map()
+  let clock = Date.now()
+  let cmd = null
+  const commands = { register: (def) => { cmd = def; return () => {} } }
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handlers.set(name, fn) }
+      if (prop === 'get') return (name) => (name === 'commands' ? commands : undefined)
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const config = { statusFile: false, intervalMinutes: 0.17, backoffAfter: 0, backoffFactor: 2, manualAffectsTimer: true }
+  await moduleNamespace.apply(fakeCtx, config)
+  const base = resolveIntervalMs(config)
+  const realNow = Date.now
+  Date.now = () => clock
+  try {
+    const agent = { session: { id: 'session-manual-on', header: {} } }
+    handlers.get('agent/status')({ agent, status: 'running' })
+    clock += 11_000
+    cmd.handler({ agent })
+    const decision = { kind: 'enter', messages: [] }
+    await handlers.get('agent/pre-step')({ agent }, async () => decision)
+    const row = statusSnapshot(config).sessions.find((item) => item.id === 'session-manual-on')
+    ok('manualAffectsTimer=true 时手动催计入退避', () => {
+      assert.equal(row.manualNudges, 0)
+      assert.equal(row.autoNudges, 1)
+      assert.equal(row.intervalMs, base * 2)
+      assert.ok(row.sinceReportMs < 1_000, '倒计时应从点击那刻重新数')
+    })
+  } finally {
+    Date.now = realNow
+    handlers.get('dispose')?.()
+  }
+}
+
 if (process.exitCode) console.error(`✗ 存在失败断言（通过 ${passed} 项）`)
 else console.log(`✓ ${passed} 项断言通过`)
 

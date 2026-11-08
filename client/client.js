@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-progress-tick-style'
     // 样式表随版本换代：旧版本注入的 <style> 仍在页面里时按 rev 替换，
     // 否则新加的类名没有规则，控件会退回浏览器默认样式（0.5.0 升级时踩过）。
-    const STYLE_REV = '0.6.2'
+    const STYLE_REV = '0.6.3'
 
     function ensureStyle() {
       if (typeof document === 'undefined') return
@@ -356,13 +356,14 @@ window.__ModuleLoader__.load({
       locale: ['语言', 'auto / zh / en'],
       commandEnabled: ['启用 /progress', '允许用 /progress 立即催一次'],
       reportHistoryCount: ['汇报正文条数', '会话「进度」页展示最近几条 agent 汇报正文，0 = 不展示'],
+      manualAffectsTimer: ['手动催也顺延计时', '关闭时「催一次」只管当下说一句，不拉长间隔、不重置倒计时'],
     }
 
     const GROUPS = [
       { title: '基础节奏', keys: ['enabled', 'intervalMinutes'] },
       { title: '汇报判定', keys: ['minReportChars', 'reportMarkers'] },
       { title: '展示', keys: ['reportHistoryCount'] },
-      { title: '提醒策略', keys: ['maxNudgesPerTurn', 'backoffAfter', 'backoffFactor', 'detailEvery', 'includeActions', 'actionCount'] },
+      { title: '提醒策略', keys: ['maxNudgesPerTurn', 'backoffAfter', 'backoffFactor', 'detailEvery', 'includeActions', 'actionCount', 'manualAffectsTimer'] },
       { title: '卡住与子 agent', keys: ['stuckDetection', 'stuckThreshold', 'subagentSummary', 'subagentStaleMinutes'] },
       { title: '存储与命令', keys: ['statusFile', 'statusDir', 'locale', 'commandEnabled'] },
     ]
