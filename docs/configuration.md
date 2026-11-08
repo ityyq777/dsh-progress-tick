@@ -16,7 +16,7 @@
 | `actionCount` | `3` | How many actions to include |
 | `detailEvery` | `2` | Every Nth reminder is the detailed variant |
 | `stuckDetection` | `true` | Switch to the "are you stuck?" reminder |
-| `stuckThreshold` | `3` | Consecutive identical actions that count as stuck |
+| `stuckThreshold` | `3` | Consecutive byte-identical actions (tool + target + arguments) that count as stuck |
 | `subagentSummary` | `true` | Mention subagent status in reminders |
 | `subagentStaleMinutes` | `10` | A subagent silent this long is reported as stalled |
 | `statusFile` | `true` | Write a per-session JSON state file |

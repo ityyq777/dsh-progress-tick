@@ -17,7 +17,7 @@ import Schema from '@deepseek-ai/schemastery'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promises as fsp } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 export const name = 'progress-tick'
 
@@ -26,7 +26,7 @@ const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.6.0'
+const VERSION = '0.6.1'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
 const MAX_PROMPT_ACTIONS = 8
@@ -193,6 +193,13 @@ export function actionTarget(name, args) {
   return ''
 }
 
+/** 动作参数的指纹：同一工具 + 同一目标 + 同一份参数才算“重复动作”。 */
+export function actionFingerprint(args) {
+  const raw = typeof args === 'string' ? args : args && typeof args === 'object' ? JSON.stringify(args) : ''
+  if (!raw) return ''
+  return createHash('sha1').update(raw.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 10)
+}
+
 export function trimTarget(text, max = 60) {
   const value = String(text ?? '').replace(/\s+/g, ' ').trim()
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`
@@ -353,10 +360,12 @@ function getState(sessionId) {
   return fresh
 }
 
-function noteAction(state, name, target, callId) {
+function noteAction(state, name, target, callId, fingerprint = '') {
   // 事件流里 target 可能很长：落状态前统一压到 160 字，避免状态文件/内存被撑大。
   const clean = trimTarget(target, 160)
-  const key = `${name}:${clean}`
+  // 只比 target 会把“同一个文件的多次不同编辑”“同一个 run_code 的不同步骤”
+  // 误判成原地打转；带上参数指纹后，只有参数一模一样的连续调用才算重复。
+  const key = `${name}:${clean}::${fingerprint}`
   if (key && key === state.lastKey) state.repeat += 1
   else {
     state.repeat = 1
@@ -1223,7 +1232,13 @@ export async function apply(ctx, initialConfig) {
       if (event.type === 'tool/call') {
         const data = event.data ?? {}
         const callId = data.callId ?? data.id
-        noteAction(state, data.name ?? 'tool', actionTarget(data.name, data.arguments), callId)
+        noteAction(
+          state,
+          data.name ?? 'tool',
+          actionTarget(data.name, data.arguments),
+          callId,
+          actionFingerprint(data.arguments),
+        )
         scheduleBroadcast()
         return
       }

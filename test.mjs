@@ -546,6 +546,44 @@ ok('statusSnapshot 空注册表结构', () => {
 }
 
 // ---- 汇总（放最后，避免在追加用例之前就打印成功）
+// ---- 卡住判定：只有“完全相同的连续调用”才算重复
+{
+  const handlers = new Map()
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handlers.set(name, fn) }
+      if (prop === 'get') return () => undefined
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const config = { statusFile: false, intervalMinutes: 5, stuckThreshold: 3 }
+  await moduleNamespace.apply(fakeCtx, config)
+  const session = { id: 'session-stuck', header: { cwd: '/tmp/demo' } }
+  const row = () => statusSnapshot(config).sessions.find((item) => item.id === 'session-stuck')
+  const emit = (name, args) => handlers.get('session/event')(session, { type: 'tool/call', data: { name, arguments: JSON.stringify(args) } })
+
+  emit('edit', { file_path: 'a.cjs', old_string: 'x', new_string: 'y1' })
+  emit('edit', { file_path: 'a.cjs', old_string: 'y1', new_string: 'y2' })
+  emit('edit', { file_path: 'a.cjs', old_string: 'y2', new_string: 'y3' })
+  emit('edit', { file_path: 'a.cjs', old_string: 'y3', new_string: 'y4' })
+  ok('同一文件的连续不同编辑不算卡住', () => {
+    assert.equal(row().stuck, false)
+  })
+
+  for (let i = 0; i < 3; i += 1) emit('bash', { command: 'pnpm build' })
+  ok('完全相同的命令连续 3 次算卡住', () => {
+    assert.equal(row().stuck, true)
+  })
+
+  emit('bash', { command: 'pnpm build --watch' })
+  ok('参数一变就不再算重复', () => {
+    assert.equal(row().stuck, false)
+  })
+  handlers.get('dispose')?.()
+}
+
 if (process.exitCode) console.error(`✗ 存在失败断言（通过 ${passed} 项）`)
 else console.log(`✓ ${passed} 项断言通过`)
 

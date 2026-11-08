@@ -24,9 +24,12 @@ Both are configurable.
 - **Back-off**: after `backoffAfter` nudges in one turn, the effective interval is
   multiplied by `backoffFactor` (capped at 8×), so a long turn does not turn into
   a stream of reminders.
-- **Stuck detection**: when the same action (tool + target) repeats
-  `stuckThreshold` times in a row, the reminder changes from "report progress" to
-  "are you stuck? say where and what you already tried".
+- **Stuck detection**: an action is identified by tool + target **+ a fingerprint
+  of its arguments**, so editing the same file four times with different content
+  (or running four different `run_code` steps) is *not* a repeat — only byte-identical
+  calls count. When the same action repeats `stuckThreshold` times in a row, the
+  reminder changes from "report progress" to "are you stuck? say where and what you
+  already tried".
 - **Detail level**: every `detailEvery`-th reminder includes a compact summary of
   the most recent actions (tool name + target + failure marker) and subagent
   status, so the model has something concrete to report.
