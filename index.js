@@ -26,7 +26,7 @@ const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.6.3'
+const VERSION = '0.6.4'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
 const MAX_PROMPT_ACTIONS = 8
@@ -39,6 +39,7 @@ const RATE_WINDOW_MS = 60_000
 const RATE_LIMIT = 20
 const MAX_BACKOFF_EXPONENT = 3 // 间隔最多放大 8×（factor 默认 2）
 const MAX_REPORTS = 10
+const STALL_MS = 60_000 // 流式分片 60s 没有新内容就算停滞
 const DEFAULT_STATUS_DIR = join(homedir(), '.dsh', 'progress-tick', 'status')
 const CJK = /[\u4e00-\u9fff]/
 
@@ -337,6 +338,8 @@ function getState(sessionId) {
     done: true,
     turnStartedAt: 0,
     lastNudgeAt: 0,
+    stepStartedAt: 0,   // 当前 step 开始时间（0 = 没有 step 在跑）
+    lastChunkAt: 0,     // 最近一次 assistant-stream 分片时间
     title: '',
     cwd: '',
     nudges: 0,          // 本轮自动提醒次数：决定退避与上限
@@ -708,6 +711,11 @@ export function statusSnapshot(config) {
     const capped = max > 0 && state.nudges >= max
     const last = state.actions.length ? state.actions[state.actions.length - 1] : null
     const staleMs = Math.max(1, Number(config.subagentStaleMinutes ?? 10) || 10) * 60_000
+    // step 内部（模型流式 / 长工具）不经过 pre-step，提醒只能等这一步结束；
+    // 这些字段让界面能区分“还没到点”和“到点了但投递不了”。
+    const stepInFlightMs = state.stepStartedAt ? Math.max(0, now - state.stepStartedAt) : 0
+    const chunkGapMs = state.stepStartedAt ? Math.max(0, now - (state.lastChunkAt || state.stepStartedAt)) : 0
+    const overdueNow = !capped && Boolean(nextAt) && now >= nextAt && !state.done
     sessions.push({
       id: state.sessionId,
       short: String(state.sessionId).replace(/^session-/, '').slice(0, 8),
@@ -723,9 +731,15 @@ export function statusSnapshot(config) {
       capped,
       intervalMs: interval,
       elapsedMs: state.turnStartedAt ? Math.max(0, now - state.turnStartedAt) : 0,
+      stepInFlightMs,
+      chunkGapMs,
+      // 到点了但正卡在某一步里：提醒要等这一步结束才投得出去。
+      deliveryPending: overdueNow && stepInFlightMs > 0,
+      // 流式长时间没有新分片：更像 provider 卡住，而不是 agent 在干活。
+      stalled: stepInFlightMs > 0 && chunkGapMs >= STALL_MS,
       sinceReportMs: state.anchor ? Math.max(0, now - state.anchor) : 0,
       nextInMs: capped || !nextAt ? 0 : Math.max(0, nextAt - now),
-      overdue: !capped && Boolean(nextAt) && now >= nextAt && !state.done,
+      overdue: overdueNow,
       stuck: state.repeat >= threshold,
       // 只回展示需要的字段：完整 target 可能包含命令里的凭证，而且每 4 秒轮询一次。
       lastAction: last ? { name: last.name, target: trimTarget(last.target, 80), failed: Boolean(last.failed), at: last.at } : null,
@@ -1093,6 +1107,8 @@ export async function apply(ctx, initialConfig) {
     try {
       const agent = payload?.agent
       if (!isMainAgent(agent)) return
+      const state0 = getState(agent.session.id)
+      if (!state0.done) state0.lastChunkAt = Date.now()
       const frame = payload?.frame
       if (frame?.type !== 'chunk' || frame.chunk?.type !== 'text-delta') return
       const text = frame.chunk.text
@@ -1261,6 +1277,17 @@ export async function apply(ctx, initialConfig) {
         const callId = data.callId ?? data.id
         // 失败结果有两种形状：显式 error，或 message.isError = true（常见）。
         finishAction(state, callId, Boolean(data.error || data.message?.isError === true))
+        scheduleBroadcast()
+        return
+      }
+      if (event.type === 'step/start') {
+        state.stepStartedAt = Date.now()
+        state.lastChunkAt = 0
+        scheduleBroadcast()
+        return
+      }
+      if (event.type === 'step/end') {
+        state.stepStartedAt = 0
         scheduleBroadcast()
         return
       }

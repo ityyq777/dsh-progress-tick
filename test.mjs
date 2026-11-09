@@ -683,6 +683,64 @@ ok('statusSnapshot 空注册表结构', () => {
   }
 }
 
+// ---- 到点但卡在某一步里：快照要能说明“提醒投不出去”
+{
+  const handlers = new Map()
+  let clock = Date.now()
+  const fakeCtx = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'on') return (name, fn) => { handlers.set(name, fn) }
+      if (prop === 'get') return () => undefined
+      if (prop === 'logger') return () => ({ info() {}, warn() {} })
+      if (prop === 'inject') return undefined
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+  const config = { statusFile: false, intervalMinutes: 0.17, backoffAfter: 99 }
+  await moduleNamespace.apply(fakeCtx, config)
+  const realNow = Date.now
+  Date.now = () => clock
+  try {
+    const agent = { session: { id: 'session-step', header: {} } }
+    const emit = (type, data) => handlers.get('session/event')({ id: agent.session.id, header: {} }, { type, data })
+    handlers.get('agent/status')({ agent, status: 'running' })
+    emit('step/start', {})
+    const row = () => statusSnapshot(config).sessions.find((item) => item.id === 'session-step')
+
+    // 一步跑得比间隔还久，且没有任何流式分片
+    clock += 200_000
+    ok('到点但步未结束 → deliveryPending，且标记流式停滞', () => {
+      const r = row()
+      assert.equal(r.overdue, true)
+      assert.equal(r.deliveryPending, true)
+      assert.ok(r.stepInFlightMs >= 200_000)
+      assert.equal(r.stalled, true, '200s 没有分片应判停滞')
+    })
+
+    // 有分片进来就不再算停滞
+    handlers.get('agent/assistant-stream')({
+      agent,
+      frame: { type: 'chunk', chunk: { type: 'text-delta', text: '正在处理' } },
+    })
+    ok('流式有分片时不算停滞', () => {
+      const r = row()
+      assert.equal(r.stalled, false)
+      assert.ok(r.chunkGapMs < 1_000)
+    })
+
+    // 一步结束：不再“等待投递”，提醒可以在下一个 step 注入
+    emit('step/end', {})
+    ok('step 结束即恢复可投递', () => {
+      const r = row()
+      assert.equal(r.stepInFlightMs, 0)
+      assert.equal(r.deliveryPending, false)
+    })
+  } finally {
+    Date.now = realNow
+    handlers.get('dispose')?.()
+  }
+}
+
 if (process.exitCode) console.error(`✗ 存在失败断言（通过 ${passed} 项）`)
 else console.log(`✓ ${passed} 项断言通过`)
 

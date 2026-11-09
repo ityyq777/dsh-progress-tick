@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-progress-tick-style'
     // 样式表随版本换代：旧版本注入的 <style> 仍在页面里时按 rev 替换，
     // 否则新加的类名没有规则，控件会退回浏览器默认样式（0.5.0 升级时踩过）。
-    const STYLE_REV = '0.6.3'
+    const STYLE_REV = '0.6.4'
 
     function ensureStyle() {
       if (typeof document === 'undefined') return
@@ -858,15 +858,31 @@ window.__ModuleLoader__.load({
               .join(' · '),
           }),
           h(Meta, {
-            label: item.capped ? '提醒上限' : '下次提醒',
-            value: item.capped ? '已用完' : item.running ? formatCountdown(item.nextInMs) : '—',
+            label: item.capped ? '提醒上限' : item.deliveryPending ? '等待投递' : '下次提醒',
+            value: item.capped
+              ? '已用完'
+              : item.running
+                ? item.deliveryPending ? `本步 ${formatDuration(item.stepInFlightMs)}` : formatCountdown(item.nextInMs)
+                : '—',
             accent: item.running && !item.capped,
-            note: item.capped ? '等下一轮' : item.running ? `每 ${intervalMinutes} 分钟` : '',
+            note: item.capped
+              ? '等下一轮'
+              : item.deliveryPending
+                ? '到点了，但要等这一步结束才能插话'
+                : item.running ? `每 ${intervalMinutes} 分钟` : '',
           }),
           h(Meta, {
             label: '最近汇报',
             value: item.sinceReportMs ? `${formatDuration(item.sinceReportMs)} 前` : '—',
             note: item.running ? '距上次汇报' : '',
+          }),
+          h(Meta, {
+            label: '本步耗时',
+            value: item.stepInFlightMs ? formatDuration(item.stepInFlightMs) : '空闲',
+            note: item.stalled
+              ? `流式 ${formatDuration(item.chunkGapMs)} 无新内容`
+              : item.stepInFlightMs ? '模型流式 / 工具执行中' : '等下一个 step',
+            accent: item.stalled,
           }),
           h(Meta, { label: '节奏', value: `${intervalMinutes} 分钟`, note: '连续执行后提醒' })),
 
@@ -945,7 +961,14 @@ window.__ModuleLoader__.load({
           }, item.muted ? '取消静音' : '静音'))),
       h('div', { className: 'ptick-card2-meta' },
         h('span', null, '已运行 ', h('b', null, item.running ? formatDuration(item.elapsedMs) : '已结束')),
-        h('span', null, item.running ? (item.capped ? '提醒上限 ' : '下次提醒 ') : '最后提醒 ', h('b', null, item.running ? (item.capped ? '已用完' : formatCountdown(item.nextInMs)) : item.nudges > 0 ? '—' : '未触发')),
+        h('span', null, item.running ? (item.capped ? '提醒上限 ' : item.deliveryPending ? '等待投递 ' : '下次提醒 ') : '最后提醒 ',
+          h('b', null, item.running
+            ? item.capped
+              ? '已用完'
+              : item.deliveryPending
+                ? `本步 ${formatDuration(item.stepInFlightMs)}`
+                : formatCountdown(item.nextInMs)
+            : item.nudges > 0 ? '—' : '未触发')),
         h('span', null, '本轮提醒 ', h('b', null, String(item.nudges || 0)))),
       tool
         ? h('div', { className: 'ptick-card2-foot' }, h('span', null, `当前工具 · ${tool.name} · ${formatDuration(Math.max(0, now - tool.at))}`))
@@ -956,7 +979,9 @@ window.__ModuleLoader__.load({
           item.muted ? h('span', { className: 'ptick-badge' }, '已静音') : null,
           item.stuck ? h('span', { className: 'ptick-badge warn' }, '疑似卡住') : null,
           item.capped ? h('span', { className: 'ptick-badge' }, '本轮已提醒满额') : null,
-          item.overdue ? h('span', { className: 'ptick-badge warn' }, '待提醒') : null,
+          item.stalled ? h('span', { className: 'ptick-badge warn' }, `流式中断 ${formatDuration(item.chunkGapMs)}`) : null,
+          item.deliveryPending ? h('span', { className: 'ptick-badge warn' }, '已到点 · 等本步结束') : null,
+          !item.stalled && !item.deliveryPending && item.overdue ? h('span', { className: 'ptick-badge warn' }, '待提醒') : null,
           h('span', { className: 'ptick-badge' }, `${Math.round((interval / 60000) * 10) / 10} 分钟节奏`))))
     }
 
