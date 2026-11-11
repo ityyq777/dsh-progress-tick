@@ -54,15 +54,14 @@ dsh plugin --profile <profile> add dsh-progress-tick@link:/absolute/path/to/dsh-
 
 ## 4. npm
 
-`dsh-progress-tick@0.6.4` 已提交 npm 发布；截至 2026-11-11，npm 仍显示处理中的占位版本 `0.0.0-stage`。正式版本可用后，先确认版本，再安装：
+插件已发布到 npm，可查询最新版本并按包名安装：
 
 ```sh
 npm view dsh-progress-tick version --registry=https://registry.npmjs.org
-# 确认输出为 0.6.4 或更新的正式版本后：
 dsh plugin --profile <profile> add dsh-progress-tick
 ```
 
-若仍显示 `0.0.0-stage`，请等待 npm 完成处理，或使用上面的 GitHub 安装方式。安装器使用的 registry 也应能获取到该正式版本。
+安装器使用的 registry 应能获取到该包的正式版本。
 
 ## 5. 桌面端（Electron 版 DSH）
 
@@ -74,7 +73,7 @@ DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
 "$DSH" plugin --profile desktop add github:ityyq777/dsh-progress-tick
 ```
 
-应用安装位置不同或使用其他操作系统时，请以实际的桌面应用 CLI 路径为准。npm 正式版本可用后，也可把上面 `add` 后面的 GitHub 地址换成 `dsh-progress-tick`。普通全局 CLI 可能不支持管理桌面端的 profile。
+应用安装位置不同或使用其他操作系统时，请以实际的桌面应用 CLI 路径为准。也可把上面 `add` 后面的 GitHub 地址换成 npm 包名 `dsh-progress-tick`。普通全局 CLI 可能不支持管理桌面端的 profile。
 
 ## 升级与卸载
 

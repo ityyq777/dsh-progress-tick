@@ -11,7 +11,7 @@ reports.
 > `notice` message before the model's next request, asking it to state what it is
 > doing, what is done, and what comes next — before it calls the next tool.
 
-> 安装：GUI 插件面板/插件市场点「安装」，或通过 GitHub 安装。npm 包已提交发布，待 npm 完成处理后可使用包名安装；桌面端 CLI 与各安装方式详见 [docs/install.md](docs/install.md)。
+> 安装：GUI 插件面板/插件市场点「安装」，或使用 npm 包名 `dsh-progress-tick`、GitHub 地址安装；桌面端 CLI 与各安装方式详见 [docs/install.md](docs/install.md)。
 
 ## 功能速览
 
