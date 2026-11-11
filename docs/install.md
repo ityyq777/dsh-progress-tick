@@ -8,7 +8,7 @@
 
 - **不加 `--profile`**：`dsh plugin` 是 profile 级工具，`--profile <name>` 是必填项，裸跑只会报 `required option '--profile <name>' not specified`。
 - **手动加 `-w`**：`dsh plugin add` 会把参数原样转发给 pnpm。pnpm 9 及更早在工作区根目录 add 会报 `ERR_PNPM_ADDING_TO_ROOT`，于是有人传 `-w`；但 profile 目录自带 `pnpm-workspace.yaml`（`packages: ["."]`），pnpm 10+ 不再需要 `-w`——**先 `corepack enable` 或升级到 pnpm ≥ 10，就不要也不该再加 `-w`**。DSH 官方安装器与 dshmarket 都已按 profile 是否工作区自动注入 `-w`，无需手工干预。
-- **桌面端（Electron）**：launcher 明确拒绝 `dsh plugin --profile desktop`（“profile "desktop" is managed exclusively by the Electron application”）。桌面端**没有 CLI 安装路径**，这不是插件的问题，任何第三方都改不了——见第 5 节。
+- **桌面端（Electron）**：不同安装来源的 CLI 可能支持不同的 profile。普通 CLI 可能拒绝 `--profile desktop`；请使用桌面应用自带的 CLI，或在应用内安装，见第 5 节。
 
 ## 1. GUI（推荐给使用者）
 
@@ -52,15 +52,29 @@ dsh plugin --profile <profile> add dsh-progress-tick@link:/absolute/path/to/dsh-
 2. 浏览器强刷（`Cmd/Ctrl+Shift+R`）：客户端包的 URL 带构建版本号，刷新才会取新包；
 3. 改了 `index.js`（Host 侧）则必须重启 `dsh <profile>`。
 
-## 4. npm（发布后）
+## 4. npm
+
+`dsh-progress-tick@0.6.4` 已提交 npm 发布；截至 2026-11-11，npm 仍显示处理中的占位版本 `0.0.0-stage`。正式版本可用后，先确认版本，再安装：
 
 ```sh
+npm view dsh-progress-tick version --registry=https://registry.npmjs.org
+# 确认输出为 0.6.4 或更新的正式版本后：
 dsh plugin --profile <profile> add dsh-progress-tick
 ```
 
+若仍显示 `0.0.0-stage`，请等待 npm 完成处理，或使用上面的 GitHub 安装方式。安装器使用的 registry 也应能获取到该正式版本。
+
 ## 5. 桌面端（Electron 版 DSH）
 
-桌面端的 profile 由应用独占管理，CLI 一律拒绝。正确姿势只有一条：打开桌面端 **设置 → 插件**，在那里搜索/安装本插件（同样支持粘贴 `github:` 地址，以应用界面实际提供的入口为准）。如果桌面端列表里搜不到：先确认应用已更新到较新版本，再向应用反馈——那是宿主能力边界，不是本插件的安装问题。
+可以在桌面应用的 **设置 → 插件** 中安装，也可以使用桌面应用自带的 CLI 管理 `desktop` profile。例如在 macOS 上：
+
+```sh
+DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
+"$DSH" plugin --profile desktop list
+"$DSH" plugin --profile desktop add github:ityyq777/dsh-progress-tick
+```
+
+应用安装位置不同或使用其他操作系统时，请以实际的桌面应用 CLI 路径为准。npm 正式版本可用后，也可把上面 `add` 后面的 GitHub 地址换成 `dsh-progress-tick`。普通全局 CLI 可能不支持管理桌面端的 profile。
 
 ## 升级与卸载
 
