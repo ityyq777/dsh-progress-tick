@@ -1,5 +1,15 @@
 # 安装
 
+## 推荐：从 npm 安装
+
+将 `<profile>` 替换成实际的 profile 名称，例如 `web`：
+
+```sh
+dsh plugin --profile <profile> add dsh-progress-tick
+```
+
+桌面端请使用应用自带的 CLI 或应用内插件设置，见第 5 节。安装器使用的 registry 应能获取到该包的正式版本；可用 `npm view dsh-progress-tick version --registry=https://registry.npmjs.org` 查询官方 npm 上的最新版本。
+
 三种入口共用同一套安装器：GUI 插件面板的「包名或地址」输入框、`dsh plugin add`、以及插件市场，接受的都是同一批 spec 形式。
 
 ## 0. 先看一眼：为什么有的命令装不上
@@ -15,10 +25,10 @@
 左上角 **插件 → 安装**（或插件市场卡片上的「安装」按钮），在「包名或地址」里粘贴：
 
 ```
-github:ityyq777/dsh-progress-tick
+dsh-progress-tick
 ```
 
-## 2. 命令行
+## 2. GitHub 安装（备选）
 
 把 `<profile>` 换成你的 profile 名（默认网页版是 `web`；`dsh plugin --profile web list` 之类的报错提示也认这个名字）。
 
@@ -52,16 +62,11 @@ dsh plugin --profile <profile> add dsh-progress-tick@link:/absolute/path/to/dsh-
 2. 浏览器强刷（`Cmd/Ctrl+Shift+R`）：客户端包的 URL 带构建版本号，刷新才会取新包；
 3. 改了 `index.js`（Host 侧）则必须重启 `dsh <profile>`。
 
-## 4. npm
-
-插件已发布到 npm，可查询最新版本并按包名安装：
+## 4. 查看 npm 版本
 
 ```sh
 npm view dsh-progress-tick version --registry=https://registry.npmjs.org
-dsh plugin --profile <profile> add dsh-progress-tick
 ```
-
-安装器使用的 registry 应能获取到该包的正式版本。
 
 ## 5. 桌面端（Electron 版 DSH）
 
@@ -70,10 +75,10 @@ dsh plugin --profile <profile> add dsh-progress-tick
 ```sh
 DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
 "$DSH" plugin --profile desktop list
-"$DSH" plugin --profile desktop add github:ityyq777/dsh-progress-tick
+"$DSH" plugin --profile desktop add dsh-progress-tick
 ```
 
-应用安装位置不同或使用其他操作系统时，请以实际的桌面应用 CLI 路径为准。也可把上面 `add` 后面的 GitHub 地址换成 npm 包名 `dsh-progress-tick`。普通全局 CLI 可能不支持管理桌面端的 profile。
+应用安装位置不同或使用其他操作系统时，请以实际的桌面应用 CLI 路径为准。也可以使用第 2 节的 GitHub 地址作为备选。普通全局 CLI 可能不支持管理桌面端的 profile。
 
 ## 升级与卸载
 
@@ -82,4 +87,4 @@ dsh plugin --profile <profile> update dsh-progress-tick   # 升级
 dsh plugin --profile <profile> remove dsh-progress-tick   # 卸载
 ```
 
-> 依赖 GitHub 可达（国内可能需要代理或镜像）；git 安装落盘的是真实副本，源码改动不会热更新，改代码请改用第 3 种 `link:` 方式。
+> GitHub 安装需要网络能够访问 GitHub；git 安装通常落盘为副本，源码改动不会自动更新，开发时请使用第 3 节的 `link:` 方式。

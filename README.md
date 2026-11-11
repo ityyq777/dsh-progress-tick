@@ -11,7 +11,7 @@ reports.
 > `notice` message before the model's next request, asking it to state what it is
 > doing, what is done, and what comes next — before it calls the next tool.
 
-> 安装：GUI 插件面板/插件市场点「安装」，或使用 npm 包名 `dsh-progress-tick`、GitHub 地址安装；桌面端 CLI 与各安装方式详见 [docs/install.md](docs/install.md)。
+> 推荐安装：`dsh plugin --profile <profile> add dsh-progress-tick`（将 `<profile>` 替换成实际名称）。桌面端 CLI、GUI 及其他安装方式详见 [docs/install.md](docs/install.md)。
 
 ## 功能速览
 
