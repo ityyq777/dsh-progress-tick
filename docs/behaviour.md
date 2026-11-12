@@ -38,6 +38,12 @@ Both are configurable.
 - **Detail level**: every `detailEvery`-th reminder includes a compact summary of
   the most recent actions (tool name + target + failure marker) and subagent
   status, so the model has something concrete to report.
+- **Unanswered escalation**: a reminder only counts as answered when the next
+  assistant message contains real text. A step that emits a reasoning block plus
+  a tool call is *not* a reply. If a reminder goes unanswered, the next one says
+  so explicitly; after two in a row it asks the model to output the report text
+  first and hold off on tools. The cockpit shows "上次提醒未回应" while that is
+  pending.
 
 ## Known limits
 

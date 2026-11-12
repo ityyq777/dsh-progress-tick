@@ -165,6 +165,22 @@ ok('nudgeText 子 agent 情况', () => {
   const text = nudgeText({ locale: 'zh', elapsedMs: 60000, intervalMs: 300000, subagents: ['2 个已结束'] })
   assert.ok(text.includes('子 agent 情况'))
 })
+ok('nudgeText 要求先出正文再调工具', () => {
+  const text = nudgeText({ locale: 'zh', elapsedMs: 60000, intervalMs: 300000 })
+  assert.ok(text.includes('再发起工具调用'))
+  assert.ok(text.includes('只有思考块和工具调用不算回应'))
+})
+ok('nudgeText 第一次升级：点名上次没回应', () => {
+  const text = nudgeText({ locale: 'zh', elapsedMs: 60000, intervalMs: 300000, escalation: 1 })
+  assert.ok(text.includes('上一次提醒没有在正文里得到回应'))
+  assert.ok(!text.includes('连续两次提醒'))
+})
+ok('nudgeText 第二次升级：先别调工具', () => {
+  const text = nudgeText({ locale: 'zh', elapsedMs: 60000, intervalMs: 300000, escalation: 2 })
+  assert.ok(text.includes('连续两次提醒'))
+  assert.ok(text.includes('暂时不要调用任何工具'))
+  assert.ok(text.length <= 700)
+})
 ok('nudgeText 超长截断', () => {
   const actions = Array.from({ length: 8 }, (_, i) => ({ name: 'bash', target: `command-${i}-${'x'.repeat(50)}` }))
   const text = nudgeText({ locale: 'zh', elapsedMs: 60000, intervalMs: 300000, detail: true, actions, actionCount: 8 })

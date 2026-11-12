@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-progress-tick-style'
     // 样式表随版本换代：旧版本注入的 <style> 仍在页面里时按 rev 替换，
     // 否则新加的类名没有规则，控件会退回浏览器默认样式（0.5.0 升级时踩过）。
-    const STYLE_REV = '0.6.4'
+    const STYLE_REV = '0.6.5'
 
     function ensureStyle() {
       if (typeof document === 'undefined') return
@@ -855,6 +855,7 @@ window.__ModuleLoader__.load({
             value: `${item.nudges || 0} 次`,
             note: [caps ? `上限 ${caps} 次` : '不限次数', item.manualNudges ? `含手动 ${item.manualNudges}` : '']
               .filter(Boolean)
+              .concat(item.unansweredNotices ? [`未获回应 ${item.unansweredNotices}`] : [])
               .join(' · '),
           }),
           h(Meta, {
@@ -981,6 +982,7 @@ window.__ModuleLoader__.load({
           item.capped ? h('span', { className: 'ptick-badge' }, '本轮已提醒满额') : null,
           item.stalled ? h('span', { className: 'ptick-badge warn' }, `流式中断 ${formatDuration(item.chunkGapMs)}`) : null,
           item.deliveryPending ? h('span', { className: 'ptick-badge warn' }, '已到点 · 等本步结束') : null,
+          item.unansweredNotices ? h('span', { className: 'ptick-badge warn' }, `上次提醒未回应${item.unansweredNotices > 1 ? ` ×${item.unansweredNotices}` : ''}`) : null,
           !item.stalled && !item.deliveryPending && item.overdue ? h('span', { className: 'ptick-badge warn' }, '待提醒') : null,
           h('span', { className: 'ptick-badge' }, `${Math.round((interval / 60000) * 10) / 10} 分钟节奏`))))
     }

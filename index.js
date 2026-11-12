@@ -26,7 +26,7 @@ const MAX_INTERVAL_MS = 24 * 60 * 60_000
 const MAX_STATES = 200
 const MAX_CHILDREN = 24 // 每个会话最多记几个子 agent，防 fan-out 打爆状态
 /** 版本号（供 /api 与启动标记使用）。 */
-const VERSION = '0.6.4'
+const VERSION = '0.6.5'
 const MAX_NUDGE_CHARS = 700
 const MAX_ACTIONS = 20 // 状态页抽屉的时间线用；提醒只取末尾 actionCount 条
 const MAX_PROMPT_ACTIONS = 8
@@ -225,6 +225,8 @@ export function nudgeText(options) {
     actions = [],
     stuck = null,
     subagents = [],
+    // 上一次提醒有没有在正文里得到回应：0 = 正常，1 = 上次没回，2 = 连续两次没回。
+    escalation = 0,
     cap = MAX_NUDGE_CHARS,
   } = options
   const zh = locale !== 'en'
@@ -246,8 +248,19 @@ export function nudgeText(options) {
     ? `【进度播报】本轮任务已连续执行约 ${elapsed}，这期间你没有向用户汇报过进度。`
     : `[progress] This turn has been running for about ${elapsed} without any update to the user.`
   const ask = zh
-    ? '请在本步回复正文的最前面，先用 1–2 句话说清：现在在做什么、已经完成了什么、有什么关键发现、下一步准备做什么，然后再继续调用工具推进任务。要求具体、有信息量，不要只写“继续处理中”这类空话。'
-    : 'At the very start of your next visible reply, spend 1–2 sentences on: what you are doing now, what is already done, key findings, and what comes next — then continue working. Be concrete; do not write filler like "still working".'
+    ? '请在本步回复正文的最前面，先用 1–2 句话说清：现在在做什么、已经完成了什么、有什么关键发现、下一步准备做什么，然后再继续调用工具推进任务。要求具体、有信息量，不要只写“继续处理中”这类空话。如果这一步还要继续调用工具，也要先把这段文字输出到正文，再发起工具调用——只有思考块和工具调用不算回应。'
+    : 'At the very start of your next visible reply, spend 1–2 sentences on: what you are doing now, what is already done, key findings, and what comes next — then continue working. Be concrete; do not write filler like "still working". If you still need to call tools this step, emit that text first — a reasoning block plus a tool call does not count as a reply.'
+  const escalate = zh
+    ? Number(escalation) >= 2
+      ? '注意：连续两次提醒都没有在正文里得到回应。这一步请先只输出汇报文字，暂时不要调用任何工具。'
+      : Number(escalation) >= 1
+        ? '上一次提醒没有在正文里得到回应，不要再用思考块或工具调用代替正文。'
+        : ''
+    : Number(escalation) >= 2
+      ? 'Note: two reminders in a row got no visible reply. This step, output only the report text — do not call any tool yet.'
+      : Number(escalation) >= 1
+        ? 'The previous reminder got no visible reply. Do not substitute a reasoning block or a tool call for the text.'
+        : ''
   const foot = zh
     ? `这是 DSH 主 agent 的例行进度提醒（${intervalWord}，本轮任务结束即停止）。`
     : `Routine progress check for the DSH main agent (${intervalWord}; stops when this turn ends).`
@@ -266,6 +279,7 @@ export function nudgeText(options) {
   if (subagents.length) {
     parts.push(zh ? `子 agent 情况：${subagents.join('；')}。` : `Subagent status: ${subagents.join('; ')}.`)
   }
+  if (escalate) parts.push(escalate)
   parts.push(foot)
   return clampText(parts.filter(Boolean).join(''), cap)
 }
@@ -355,6 +369,8 @@ function getState(sessionId) {
     nudgeLog: [],
     reports: [],
     awaitingReport: false,
+    unanswered: 0,      // 连续多少次提醒没换到正文回应：决定下一次提醒的硬度
+    lastAnsweredAt: 0,
     currentTool: null,
     pendingCalls: new Map(),
     subagents: new Map(),
@@ -582,6 +598,7 @@ async function writeStatusFile(state, config) {
     muted: Boolean(state.mute),
     nudges: state.nudges + state.manualNudges,
     manualNudges: state.manualNudges,
+    unansweredNotices: Number(state.unanswered) || 0,
     pendingChars: state.pendingChars,
     repeat: state.repeat,
     lastActionKey: state.lastKey,
@@ -635,6 +652,7 @@ function buildMessage(state, config, options = {}) {
     elapsedMs,
     intervalMs,
     detail: options.detail === true,
+    escalation: options.escalation,
     actions,
     actionCount: config.actionCount,
     stuck,
@@ -727,6 +745,8 @@ export function statusSnapshot(config) {
       nudges: state.nudges + state.manualNudges,
       autoNudges: state.nudges,
       manualNudges: state.manualNudges,
+      // 连续没换到正文的提醒次数：界面上提示“上次提醒没被回应”。
+      unansweredNotices: Number(state.unanswered) || 0,
       caps: max,
       capped,
       intervalMs: interval,
@@ -1169,12 +1189,15 @@ export async function apply(ctx, initialConfig) {
         const stuck = !manual && Boolean(config.stuckDetection) && state.repeat >= Math.max(2, Number(config.stuckThreshold ?? 3))
         const every = Math.max(1, Number(config.detailEvery ?? 2))
         const detail = (state.nudges + state.manualNudges + 1) % every === 0
-        const text = buildMessage(state, config, { stuck, detail })
+        // 上一次提醒没换到正文（只有思考 + 工具调用）就加硬：第一次点名，第二次直接要求先别调工具。
+        const escalation = Math.max(0, Math.min(2, Number(state.unanswered) || 0))
+        const text = buildMessage(state, config, { stuck, detail, escalation })
         appendNotice(decision, text)
 
         recordNudge(state, manual ? 'manual' : stuck ? 'stuck' : 'timer', state.anchor ? now - state.anchor : now - state.turnStartedAt, text)
         // 提醒之后 agent 的下一条正文才算“汇报”，据此收集最近 N 次汇报正文。
         state.awaitingReport = true
+        state.unanswered = escalation + 1
         // 默认：手动催只是“现在说一句”，不参与退避/上限，也不重置倒计时。
         // 想让它像普通提醒一样顺延计时，把 manualAffectsTimer 打开即可。
         const countsAsTimer = !manual || config.manualAffectsTimer === true
@@ -1251,7 +1274,9 @@ export async function apply(ctx, initialConfig) {
         const text = messageText(event.data?.message).replace(/\s+/g, ' ').trim()
         if (text && state.awaitingReport) {
           state.awaitingReport = false
+          state.unanswered = 0
           state.lastReportAt = Date.now()
+          state.lastAnsweredAt = state.lastReportAt
           state.lastReportText = text.length > 600 ? `${text.slice(0, 600)}…` : text
           state.reports.unshift({ at: state.lastReportAt, text: state.lastReportText })
           if (state.reports.length > MAX_REPORTS) state.reports.length = MAX_REPORTS
@@ -1296,6 +1321,7 @@ export async function apply(ctx, initialConfig) {
         state.currentTool = null
         // 本轮结束还没等到汇报正文：放弃等待，避免把下一个任务的回复误记成汇报。
         state.awaitingReport = false
+        state.unanswered = 0
         scheduleBroadcast()
       }
     } catch (error) {
